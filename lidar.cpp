@@ -254,42 +254,69 @@ public:
         voxel_filter.setLeafSize(voxel_size_, voxel_size_, voxel_size_);//LeafSize 설정
         voxel_filter.filter(*cloud_down);//filter해서 cloud_down시킴.
 
-        pcl::CropBox<PointT> crop_filter;
-        crop_filter.setInputCloud(cloud_down);
+        pcl::CropBox<PointT> crop_filter;//CropBox라는 필터 객체 생성
+        crop_filter.setInputCloud(cloud_down);//voxel_filter 거친 데이터 넣음
         crop_filter.setMin(Eigen::Vector4f(roi_min_x_, roi_min_y_, roi_min_z_, 1.0f));
         crop_filter.setMax(Eigen::Vector4f(roi_max_x_, roi_max_y_, roi_max_z_, 1.0f));
+        //관심 영역 직육면체의 최소값과 최대값 설정
         crop_filter.filter(*cloud_crop);
+        //이 관심 영역 안에 있는 점들만 cloud_crop에 넣음.
 
         pcl::search::KdTree<PointT>::Ptr tree(new pcl::search::KdTree<PointT>);
         tree->setInputCloud(cloud_crop);
+        /*
+        kdTree는 K-Dimensional Tree의 약자로, 3D 공간을 반으로 쪼개고, 쪼개서, 데이터를 트리구조로 정리해둔 자료구조
+        tree라는 스마트 포인터를 생성하고, cloud_crop 데이터를 넣음.
+        3D 공간에서 특정 점이 주어졌을 때, 그 점과 가장 가까운 점들을 빠르게 찾아주는 역할을 함.
+        */
 
-        std::vector<pcl::PointIndices> cluster_indices;
+        std::vector<pcl::PointIndices> cluster_indices;//군집화한 점들의 인덱스를 저장할 벡터
 
-        pcl::EuclideanClusterExtraction<PointT> clustering;
-        clustering.setInputCloud(cloud_crop);
-        clustering.setClusterTolerance(cluster_tolerance_);
+        pcl::EuclideanClusterExtraction<PointT> clustering;//유클리드 군집화 객체 생성
+        clustering.setInputCloud(cloud_crop);//자른 cloud_crop 데이터를 넣음
+        clustering.setClusterTolerance(cluster_tolerance_);//군집화 허용 오차 설정
         clustering.setMinClusterSize(min_cluster_size_);
+        //최소 군집 크기 설정
+        //점이 너무 조금 있으면 물체로 인식하지 않도록 설정(노이즈)
         clustering.setMaxClusterSize(max_cluster_size_);
-        clustering.setSearchMethod(tree);
-        clustering.extract(cluster_indices);
+        //최대 군집 크기 설정
+        //점이 너무 많으면 물체로 인식하지 않도록 설정(땅)
+        clustering.setSearchMethod(tree);//위에서 만든 kd-tree를 검색 방법으로 설정
+        clustering.extract(cluster_indices);//실행해서 위에 만든 cluster_indices 벡터에 결과 저장
 
         pcl::PointCloud<PointT>::Ptr cloud_clustered(new pcl::PointCloud<PointT>);
+        //동적 객체로 힙 영역에 군집화된 점들을 저장할 PointCloud 객체 생성
         cloud_clustered->header = cloud_crop->header;
+        /*
+        헤더 정보 다 복사해줌.
+        header에 있는 정보 : seq(메시지 번호), stamp(타임스탬프), frame_id(좌표계 이름)
+        */
         cloud_clustered->is_dense = false;
+        //이 데이터가 조밀하지 않다는 것 
+        //즉, 일부 점들이 NaN 값 같은 쓰레기값을 가질 수 있다는 의미
 
         vision_msgs::Detection3DArray detection_array;
+        //발견된 물체들을 담을 Detection3DArray 메시지 객체 생성
         detection_array.header.stamp = msg->header.stamp;
+        //원본 메시지의 타임스탬프 복사
         detection_array.header.frame_id = msg->header.frame_id;
+        //공간 좌표계 정보 복사. Velodyne 좌표계라는 의미
 
+        //찾아낸 덩어리들 하나하나 for문으로 처리
         int cluster_id = 0;
         for (const auto &indices : cluster_indices)
+        /*
+        extract에서 채워진 cluster_indices 벡터에서 하나씩 꺼내서
+        indices 라는 변수에 저장하면서 반복문 실행
+        */
         {
-            if (indices.indices.empty())
+            if (indices.indices.empty())//군집화된 인덱스가 비어있으면
             {
-                cluster_id++;
+                cluster_id++;//다음 군집으로 넘어감
                 continue;
             }
 
+            //어떤값이 들어와도 min또는 max가 되도록 초기값을 양극단으로 설정
             float min_x = std::numeric_limits<float>::max();
             float max_x = std::numeric_limits<float>::lowest();
             float min_y = std::numeric_limits<float>::max();
@@ -297,104 +324,126 @@ public:
             float min_z = std::numeric_limits<float>::max();
             float max_z = std::numeric_limits<float>::lowest();
 
-            for (const auto &idx : indices.indices)
+            for (const auto &idx : indices.indices)//군집화된 점들의 인덱스 하나씩 꺼내서
             {
-                const auto &p = cloud_crop->points[idx];
+                const auto &p = cloud_crop->points[idx];//cloud_crop에서 해당 인덱스의 점을 p에 저장
                 min_x = std::min(min_x, p.x);
                 max_x = std::max(max_x, p.x);
                 min_y = std::min(min_y, p.y);
                 max_y = std::max(max_y, p.y);
                 min_z = std::min(min_z, p.z);
-                max_z = std::max(max_z, p.z);
+                max_z = std::max(max_z, p.z);//각 축별 최소값과 최대값 갱신
 
-                PointT q = p;
+                PointT q = p;//원본 점은 바꾸면 안되니까 복사본 q 생성
                 q.intensity = static_cast<float>(cluster_id);
+                //intensity 값을 군집 아이디로 설정해서 색깔 다르게 만듬.
                 cloud_clustered->points.push_back(q);
+                //cloud_clustered에 q점 추가
             }
 
             float size_x = max_x - min_x;
             float size_y = max_y - min_y;
             float size_z = max_z - min_z;
+            //군집의 size 계산
+            //size 계산해서 너무 작거나 크면 무시
 
             if (size_y < 0.3f || size_y > 1.5f || size_z > 2.0f)
+            //너무 thin 하거나 너무 fat 하거나 너무 높으면
             {
                 cluster_id++;
-                continue;
+                continue;//다음
             }
 
-            vision_msgs::Detection3D detection;
-            detection.header = detection_array.header;
+            vision_msgs::Detection3D detection;//detection3D 메시지 객체 생성
+            detection.header = detection_array.header;//헤더 정보 복사
 
             detection.bbox.center.position.x = (min_x + max_x) * 0.5f;
             detection.bbox.center.position.y = (min_y + max_y) * 0.5f;
             detection.bbox.center.position.z = (min_z + max_z) * 0.5f;
+            //박스의 중심 좌표 계산
             detection.bbox.center.orientation.w = 1.0;
-
+            //회전 정보 Quaternion으로 표현, 회전이 없으면 w=1.0, x=y=z=0.0
+            //근데 왜 회전 정보가 없지? 계산 속도 때문에 생략한 듯. 
+            //PCA(주성분 분석)으로 회전 정보도 구할 수 있지만 계산량이 많아짐.
             detection.bbox.size.x = size_x;
             detection.bbox.size.y = size_y * 1.2f;
             detection.bbox.size.z = size_z * 1.5f;
+            //y축과 z축 크기는 살짝 여유를 줌.
 
+            //물체 클래스와 신뢰도 점수 설정
             vision_msgs::ObjectHypothesisWithPose hypothesis;
-            hypothesis.id = 0;
-            hypothesis.score = 1.0;
-            detection.results.push_back(hypothesis);
+            //이 물체가 뭔지 추측할 객체 생성
+            hypothesis.id = 0;//점 밖에 없으니까 0으로 설정
+            hypothesis.score = 1.0;//신뢰도 100% 설정. 라이다에 부딪힌 점들이니까 무조건 100프로 신뢰하는것.
+            detection.results.push_back(hypothesis);//이 추측은 detection results에 추가
 
             detection_array.detections.push_back(detection);
+            //여태까지 만든 detection 객체를 detection_array에 추가
 
             cluster_id++;
         }
 
-        if (publish_origin_)
+        if (publish_origin_)//만약 원본 데이터를 publish 하기로 설정되어 있으면
         {
-            sensor_msgs::PointCloud2 out;
-            pcl::toROSMsg(*cloud_origin, out);
+            sensor_msgs::PointCloud2 out;//빈 ROS 메시지 객체 생성
+            pcl::toROSMsg(*cloud_origin, out);//PCL PointCloud를 ROS PointCloud2 메시지로 변환
             out.header.stamp = msg->header.stamp;
-            out.header.frame_id = msg->header.frame_id;
-            cloud_origin_pub_.publish(out);
+            out.header.frame_id = msg->header.frame_id;//헤더 정보 복사
+            cloud_origin_pub_.publish(out);//원본 점구름 데이터 publish
         }
 
-        if (publish_down_)
+        if (publish_down_)//만약 다운샘플된 데이터를 publish 하기로 설정되어 있으면
         {
             sensor_msgs::PointCloud2 out;
             pcl::toROSMsg(*cloud_down, out);
             out.header.stamp = msg->header.stamp;
             out.header.frame_id = msg->header.frame_id;
-            cloud_down_pub_.publish(out);
+            cloud_down_pub_.publish(out);//똑같은 방식으로 publish
         }
 
-        if (publish_crop_)
+        if (publish_crop_)//만약 크롭된 데이터를 publish 하기로 설정되어 있으면
         {
             sensor_msgs::PointCloud2 out;
             pcl::toROSMsg(*cloud_crop, out);
             out.header.stamp = msg->header.stamp;
             out.header.frame_id = msg->header.frame_id;
-            cloud_crop_pub_.publish(out);
+            cloud_crop_pub_.publish(out);//똑같은 방식으로 publish
         }
 
-        if (publish_clustered_)
+        if (publish_clustered_)//만약 군집화된 데이터를 publish 하기로 설정되어 있으면
         {
             sensor_msgs::PointCloud2 out;
             pcl::toROSMsg(*cloud_clustered, out);
             out.header.stamp = msg->header.stamp;
             out.header.frame_id = msg->header.frame_id;
-            cloud_cluster_pub_.publish(out);
+            cloud_cluster_pub_.publish(out);//똑같은 방식으로 publish
         }
 
         bbox_pub_.publish(detection_array);
+        //detection_array 메시지를 /gigacha/lidar/bounding_boxes 토픽으로 publish
 
+        //디버그 로그 출력
         ROS_DEBUG("origin=%zu down=%zu crop=%zu clusters=%zu det=%zu",
                   cloud_origin->size(),
                   cloud_down->size(),
                   cloud_crop->size(),
                   cluster_indices.size(),
                   detection_array.detections.size());
-    }
+                  //내 데이터가 몇개인지 출력
+                  //어디가 병목인지 파악하는데 도움됨.
+    }//lidarCallback 함수 끝
 };
 
-int main(int argc, char **argv)
+int main(int argc, char **argv)//argc는 인자 개수, argv는 인자 값들(문자열 배열 포인터)
 {
     ros::init(argc, argv, "gigacha_lidar_clustering");
+    //노드 이름 설정
+    //사용자가 터미널에 입력한 인자값들을 ROS 시스템에 전달
     GigachaLidarClustering node;
+    //객체 생성하고, 생성자 호출됨.
+    //생성자 안에서 파라미터(nh_.param) 읽고, publisher, subscriber 생성됨.
     ros::spin();
+    //콜백 함수 대기 상태로 진입
+    //무한 루프 돌면서 콜백 함수가 호출되기를 기다림.
     return 0;
 }
