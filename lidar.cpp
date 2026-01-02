@@ -5,8 +5,7 @@
 #include <sensor_msgs/PointCloud2.h>
 /* ros에서 센서 데이터를 주고받을 때 사용하는 표준 규격 헤더
 lidar에서 나오는 3차원 point cloud 데이터를 담는 택배 박스 같은 것.
-ros(메시지)랑 pcl(알고리즘) 사이의 다리 역할을 함.
-pcl::fromROSMsg, pcl::toROSMsg 함수가 이 ROS 메시지랑 PCL 라이브러리 타입 간의 변환을 해줌.
+ros(메시지)랑 pcl(알고리즘) 사이의 다리 역할을 해줌.
 */
 #include <limits>
 /* c++ 표준 라이브러리 중 하나
@@ -58,9 +57,10 @@ lidar 에서는 XYZI 씀. 레이저가 반사되어서 돌아오는 세기 정�
 #include <pcl/filters/crop_box.h>
 /*
 box 처리하는 느낌인 것 같은 직사각형 모양에 점들만 남기고, 그 외의 것들을 제거할 때 사용하는 라이브러리
-x,y,z 축의 최소값min과 최대값max를 지정하여 박스를 만들고, 단순한 범위 지정이 아니고 박스를 회전시키고나 이동시켜서 더 정교하게 잘라낼 수 있다.
+x,y,z 축의 최소값min과 최대값max를 지정하여 박스를 만들고, 
+단순한 범위 지정이 아니고 박스를 회전시키고나 이동시켜서 더 정교하게 잘라낼 수 있다.
 → 내 차체의 점들을 지워줌.
-→ 로보틱스에서 팔이 작업할 때 작업 공간인 테이블 위 특정 공간만 남기고 나머지 배 경은 다 날려버림.
+→ 로보틱스에서 팔이 작업할 때 작업 공간인 테이블 위 특정 공간만 남기고 나머지 배경은 다 날려버림.
 위에껀 청소하는 거고 밑에꺼는 의미 있는 물체로 구분하는 단계입니다. 뭐 나무랑, 자동차, 사람 등으로
 */
 #include <pcl/kdtree/kdtree.h>
@@ -72,7 +72,8 @@ kd-tree는 도서관처럼 트리 구조로 뭐 총류→ 300번대 → 320번�
 /*
 클러스터 추출 라이브러리 군집화 하는거.
 가까이 있는 점들끼리 같은 색깔로 칠해주는 알고리즘임.
-작동원리 : 점 하나 찍고, kd-tree 한테 나한테 반경 몇 cm 안에 있는 점들 다 찾아줘. 하고 그걸 그룹으로 묶고, 새로 묶인 점들 기준으로 주변을 또 찾는다. 더 이상 연결되는 점이 없으면 하나의 덩어리 (Cluster) 완성.
+작동원리 : 점 하나 찍고, kd-tree 한테 나한테 반경 몇 cm 안에 있는 점들 다 찾아줘. 하고 그걸 그룹으로 묶고, 
+새로 묶인 점들 기준으로 주변을 또 찾는다. 더 이상 연결되는 점이 없으면 하나의 덩어리 (Cluster) 완성.
 처음엔 그냥 점들의 구름(Point Cloud) 같지만, 이 과정을 거치면 자동차, 보행자, 가로수처럼 개별 객체로 나뉩니다.
 아래 헤더 파일들은 ROS의 표준 메시지 패키지인 vision_msgs 라이브러리입니다.
 PCL이 데이터를 가공하는 도구였다면, 이 라이브러리는 가공된 결과를 다른 프로그램(노드)로 배송하기 위한 규격 상자입니다.
@@ -149,6 +150,10 @@ private:
     //각 단계별 데이터 publish 여부를 제어하는 bool 변수.
 public:
     GigachaLidarClustering() : nh_("~")
+    //기가차라이다클러스팅 생성자가 호출되면, nh_("~") : nh_를 "~" 네임스페이스로 초기화 private nodehandle 객체 생성
+    //왜 private로 만드냐? 코드 재사용성, 파라미터 충돌 방지
+    //예를 들어서 라이더 두 개 쓰면, 파라미터 이름이 똑같으면 충돌나니까. private nodehandle 써서
+    //똑같은 소스 코드 써도, 서로 다른 설정값을 가질 수 있음.
     {
         ROS_INFO("GIGACHA LiDAR Clustering Node1 Starting...");
         /*
@@ -272,7 +277,9 @@ public:
 
         std::vector<pcl::PointIndices> cluster_indices;//군집화한 점들의 인덱스를 저장할 벡터
 
-        pcl::EuclideanClusterExtraction<PointT> clustering;//유클리드 군집화 객체 생성
+        pcl::EuclideanClusterExtraction<PointT> clustering;
+        //유클리드 군집화 객체 생성
+        //처리하지 않은 점 하나 선택하고 그 점과 일정 거리 이내에 있는 점들을 모두 군집화
         clustering.setInputCloud(cloud_crop);//자른 cloud_crop 데이터를 넣음
         clustering.setClusterTolerance(cluster_tolerance_);//군집화 허용 오차 설정
         clustering.setMinClusterSize(min_cluster_size_);
