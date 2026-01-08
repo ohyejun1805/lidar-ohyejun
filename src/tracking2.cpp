@@ -39,6 +39,8 @@ sqrt, pow 등 수학 계산에 사용
 Mahalanobis 거리 계산 시 필요
 */
 #include <algorithm>
+#include <visualization_msgs/MarkerArray.h>
+#include <visualization_msgs/Marker.h>
 #include <Eigen/Dense>
 /* 
 Eigen 라이브러리의 Dense 행렬 연산
@@ -569,6 +571,10 @@ private:
     토픽 이름: /gigacha/lidar/bounding_boxes
     */
     ros::Publisher tracking_pub_;
+    ros::Publisher marker_pub_;
+    /* RViz 시각화를 위한 MarkerArray 퍼블리셔
+    /tracked_objects 토픽으로 MarkerArray를 보냄
+    */
     /* 송신자
     트래킹된 결과를 다른 노드로 보냄
     토픽 이름: /gigacha/lidar/tracked_objects
@@ -857,7 +863,7 @@ private:
         
         // 헝가리안 알고리즘으로 최적 매칭
         matched_tracks = HungarianAlgorithm::solve(cost_matrix);
-        // solve는 벡터 형태로 반환됨. 
+        //벡터로 반환해주는 것임
         /* 헝가리안 알고리즘을 실행해서 최적 매칭을 찾음
         전체 비용이 최소가 되는 매칭을 찾음
         */
@@ -873,8 +879,6 @@ private:
         */
         {
             if (matched_tracks[i] >= 0 && matched_tracks[i] < (int)detections.detections.size())
-            //뒤에 조건은 detections.detections.size() 전체 사이즈보다 matched_tracks[i]가 안에 있냐
-            //존재하는 번호냐? 물어보는 조건임.
             /* 트랙 i가 유효한 detection과 매칭되었으면
             (matched_tracks[i] >= 0은 매칭됨을 의미)
             */
@@ -886,7 +890,6 @@ private:
             }
         }
         
-        //앞 detections는 코드에서 선언한 변수 이름(택배 상자). 뒤에 detections는 실제 리스트 이름(내용물)
         for (size_t j = 0; j < detections.detections.size(); j++)
         /* 각 detection에 대해
         */
@@ -901,6 +904,46 @@ private:
                 */
             }
         }
+    }
+
+    // RViz 용 MarkerArray 생성 및 publish
+    void publishMarkers(const vision_msgs::Detection3DArray& tracked_array)
+    /* 트래킹된 Detection3DArray를 기반으로 MarkerArray를 만들어 RViz에 publish */
+    {
+        visualization_msgs::MarkerArray marker_array;
+
+        for (size_t i = 0; i < tracked_array.detections.size(); ++i)
+        {
+            const auto& det = tracked_array.detections[i];
+
+            visualization_msgs::Marker marker;
+            marker.header = tracked_array.header;
+            marker.ns = "tracked_objects";
+
+            // track_id가 있으면 그걸 쓰고, 없으면 인덱스로 사용
+            int track_id = (det.results.empty() ? (int)i : det.results[0].id);
+            marker.id = track_id;
+
+            marker.type = visualization_msgs::Marker::CUBE;
+            marker.action = visualization_msgs::Marker::ADD;
+
+            // 바운딩 박스 중심과 크기를 그대로 사용
+            marker.pose = det.bbox.center;
+            marker.scale = det.bbox.size;
+
+            // 시각화용 색상 (파란색, 반투명)
+            marker.color.r = 0.0f;
+            marker.color.g = 0.4f;
+            marker.color.b = 1.0f;
+            marker.color.a = 0.6f;
+
+            // 프레임당 새로 갱신되므로 life time은 짧게
+            marker.lifetime = ros::Duration(0.2);
+
+            marker_array.markers.push_back(marker);
+        }
+
+        marker_pub_.publish(marker_array);
     }
     
     // 트랙 업데이트 (칼만 필터 사용)
@@ -985,14 +1028,12 @@ private:
                 [this](const Track& track) {
                     /* 람다 함수: 각 트랙에 대해 조건을 확인
                     [this]는 이 클래스의 멤버 변수에 접근하기 위한 캡처
-                    max_disappeared_frams 접근하기 위한 거거
                     */
                     return track.disappeared_count > max_disappeared_frames_;
                     /* disappeared_count가 임계값보다 크면 true 반환
                     (제거 대상)
                     */
                 }),
-                //remove_if는 iterator 반환 여기서부터 쓰레기값이에요를 알려줌.
             tracks_.end());
         /* remove_if가 반환한 위치부터 end()까지를 erase로 제거
         이렇게 하면 실제로 삭제됨
@@ -1054,7 +1095,6 @@ public:
     /* 생성자: 트래킹 노드를 초기화
     nh_("~")는 private 노드 핸들을 생성 (파라미터 충돌 방지)
     next_track_id_(1)는 첫 번째 트랙 ID를 1로 설정
-    1번부터 시작하겠다다
     */
     {
         ROS_INFO("GIGACHA LiDAR Tracking Node (Kalman + Hungarian) Starting...");
@@ -1091,6 +1131,12 @@ public:
         "/gigacha/lidar/tracked_objects" 토픽으로 트래킹 결과를 발행
         vision_msgs::Detection3DArray 타입의 메시지를 보냄
         1은 큐 사이즈
+        */
+
+        // RViz용 MarkerArray 퍼블리셔 (/tracked_objects)
+        marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/tracked_objects", 1);
+        /* RViz에서 시각화할 MarkerArray를 publish
+        RViz의 MarkerArray 디스플레이에서 /tracked_objects 토픽을 선택하면 박스가 보임
         */
         
         last_update_time_ = ros::Time::now();
@@ -1168,6 +1214,9 @@ public:
             /* 빈 결과를 발행
             (객체가 없으니까)
             */
+            // RViz용 MarkerArray도 비운 상태로 발행
+            publishMarkers(tracked_array);
+
             return;
             /* 함수 종료
             */
@@ -1265,8 +1314,6 @@ public:
                 // 트랙 ID를 results에 추가
                 if (tracked_det.results.empty())
                 /* results가 비어있으면
-                results는 라벨링 같은거임. 뭐 이건 차다 이건 트럭이다 나무다.
-                우리는 lidar를 clustering했으니까 그냥 점군이잖아 그래서 항상 label 비어있음.
                 */
                 {
                     vision_msgs::ObjectHypothesisWithPose hypothesis;
@@ -1286,9 +1333,7 @@ public:
                     */
                 }
                 else
-                /* 
-                results가 이미 있으면
-                얘는 이제 딥러닝하면, 그냥 이거 몇번이다만 부착해주는거지.
+                /* results가 이미 있으면
                 */
                 {
                     tracked_det.results[0].id = track.track_id;
@@ -1307,6 +1352,9 @@ public:
         /* 트래킹 결과를 발행
         다른 노드들이 이 데이터를 받아서 사용할 수 있음
         */
+
+        // RViz MarkerArray도 함께 publish
+        publishMarkers(tracked_array);
         
         ROS_DEBUG("Active tracks: %zu, Detections: %zu, Matched: %zu",
                   tracks_.size(),
