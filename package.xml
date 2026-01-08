@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>lidar_ohyejun</name>
+  <version>0.0.1</version>
+  <description>LiDAR clustering and tracking package</description>
+
+  <maintainer email="user@example.com">User</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <!-- ROS dependencies -->
+  <depend>roscpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>vision_msgs</depend>
+  <depend>pcl_ros</depend>
+  <depend>pcl_conversions</depend>
+
+  <!-- System dependencies -->
+  <depend>libeigen3-dev</depend>
+  <depend>libpcl-all-dev</depend>
+
+  <export>
+    <!-- Other tools can request additional information be placed here -->
+  </export>
+</package>
