@@ -916,36 +916,59 @@ private:
         {
             const auto& det = tracked_array.detections[i];
 
+            // -------------------------------------------
+            // 1. 파란색 박스 (기존 코드)
+            // -------------------------------------------
             visualization_msgs::Marker marker;
             marker.header = tracked_array.header;
-            marker.ns = "tracked_objects";
+            marker.ns = "tracked_objects"; 
 
-            // track_id가 있으면 그걸 쓰고, 없으면 인덱스로 사용
             int track_id = (det.results.empty() ? (int)i : det.results[0].id);
             marker.id = track_id;
 
             marker.type = visualization_msgs::Marker::CUBE;
             marker.action = visualization_msgs::Marker::ADD;
 
-            // 바운딩 박스 중심과 크기를 그대로 사용
             marker.pose = det.bbox.center;
             marker.scale = det.bbox.size;
 
-            // 시각화용 색상 (파란색, 반투명)
             marker.color.r = 0.0f;
             marker.color.g = 0.4f;
             marker.color.b = 1.0f;
             marker.color.a = 0.6f;
 
-            // 프레임당 새로 갱신되므로 life time은 짧게
             marker.lifetime = ros::Duration(0.2);
 
             marker_array.markers.push_back(marker);
+
+            // -------------------------------------------
+            // 2. ID 글자 (Text Marker) - 크기 수정됨
+            // -------------------------------------------
+            visualization_msgs::Marker text_marker = marker; 
+            
+            text_marker.ns = "tracked_ids"; 
+            text_marker.id = track_id;      
+            text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING; 
+
+            text_marker.text = std::to_string(track_id); 
+            
+            text_marker.scale.z = 0.5; 
+
+            // 글자 색상 (하얀색)
+            text_marker.color.r = 1.0f; 
+            text_marker.color.g = 1.0f; 
+            text_marker.color.b = 1.0f; 
+            text_marker.color.a = 1.0f; 
+
+            // 위치 조정: 박스보다 1.2m 위에 띄우기 (글자가 작아졌으니 높이도 살짝 낮춤)
+            text_marker.pose.position.z += 1.2;
+
+            marker_array.markers.push_back(text_marker);
         }
 
         marker_pub_.publish(marker_array);
     }
-    
+
     // 트랙 업데이트 (칼만 필터 사용)
     void updateTrack(Track& track, const vision_msgs::Detection3D& detection, double dt)
     /* 트랙을 업데이트하는 함수
