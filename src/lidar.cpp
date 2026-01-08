@@ -198,7 +198,7 @@ public:
         bbox_pub_ = nh_.advertise<vision_msgs::Detection3DArray>("/gigacha/lidar/bounding_boxes", 1);
         //Detection3DArray : 중심 좌표, 크기 (가로세로높이), 회전 정보를 보내는 박스 배열. 주변에 장애물이 최소 1개 이상일테니까
         //그 장애물 배열들을 싹 publish 하는거임.
-        lidar_sub_ = nh_.subscribe("/velodyne_points", 1, &GigachaLidarClustering::lidarCallback, this);
+        lidar_sub_ = nh_.subscribe("/lidar3D", 1, &GigachaLidarClustering::lidarCallback, this);
         /*
         lidar_sub_은 수신받는다(subscribe),"/velodyne_points"라는 데이터만 최신거 1개,
         &GigachaLidarClustering::lidarCallback이게 콜백함수로 subscribe에서 가장 중요한 것,
