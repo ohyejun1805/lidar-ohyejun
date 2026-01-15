@@ -94,6 +94,11 @@ With Pose(위치/자세) : 그리고 내 차 기준으로 어디 위치에 서 �
 위에 딥러닝이나 클러스터링 결과로 나온 class id(물체 종류)와 score(신뢰도), 그리고 Pose(좌표)를 여기에 채워 넣습니다.
 */
 
+// [추가해야 할 헤더들]
+#include <pcl/segmentation/sac_segmentation.h> // RANSAC 알고리즘
+#include <pcl/filters/extract_indices.h>       // 인덱스 추출 (지면/장애물 분리)
+#include <pcl/filters/passthrough.h>           // 영역 자르기 (Zone 나누기)
+
 using PointT = pcl::PointXYZI;
 // XYZ 좌표에 intensity(강도)까지 변수로 가지는 Point 사용 (intensity는 차선 식별에 도움을 주는 변수)
 
@@ -131,6 +136,10 @@ private:
     //송신자인데 downsampling, voxelgrid을 거쳐 점 개수가 줄어든 데이터 보내는 것.
     ros::Publisher cloud_crop_pub_;
     //송신자(크롭) Cropbox를 거쳐서 관심 영역만 남은 데이터를 내보냄.
+
+    // [추가됨] 지면 제거된 데이터 확인용 Publisher
+    ros::Publisher cloud_ground_removed_pub_;
+
     ros::Publisher cloud_cluster_pub_;
     //송신자(군집화), 물체별로 색깔이 칠해진 최종 점구름 데이터를 보냅니다. 
     ros::Publisher bbox_pub_;
@@ -167,7 +176,7 @@ public:
         nh_.param<float>("roi_max_x", roi_max_x_, 30.0f);
         nh_.param<float>("roi_min_y", roi_min_y_, -10.0f);
         nh_.param<float>("roi_max_y", roi_max_y_, 10.0f);
-        nh_.param<float>("roi_min_z", roi_min_z_, -1.8f);
+        nh_.param<float>("roi_min_z", roi_min_z_, -5.0f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
         nh_.param<float>("roi_max_z", roi_max_z_, 0.3f);
         nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.4f);
         nh_.param<int>("min_cluster_size", min_cluster_size_, 3);
@@ -185,6 +194,10 @@ public:
         cloud_origin_pub_  = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_origin", 1);
         cloud_down_pub_    = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_downsampled", 1);
         cloud_crop_pub_    = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_roi", 1);
+
+        // [추가됨] 지면 제거 확인용 토픽 생성
+        cloud_ground_removed_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_ground_removed", 1);
+
         cloud_cluster_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_clustered", 1);
         /*
         advertise라는 함수인데 라이다 점군 데이터를 타입으로 하는 함수다. 
@@ -267,8 +280,88 @@ public:
         crop_filter.filter(*cloud_crop);
         //이 관심 영역 안에 있는 점들만 cloud_crop에 넣음.
 
+        // ---------------------------------------------------------
+        // [수정됨] 3-Zone RANSAC Ground Removal (보급형 Patchwork)
+        // ---------------------------------------------------------
+        
+        // 최종적으로 "장애물(바닥 아님)"만 모을 점구름 통을 만듭니다.
+        pcl::PointCloud<PointT>::Ptr cloud_obstacles_total(new pcl::PointCloud<PointT>);
+
+        // 3개의 구역을 설정합니다. (단위: 미터)
+        // Zone 1: roi_min_x ~ 10m (가까운 곳)
+        // Zone 2: 10m ~ 25m (중간)
+        // Zone 3: 25m ~ roi_max_x (먼 곳)
+        float zone_limits[4] = {roi_min_x_, 10.0f, 25.0f, roi_max_x_};
+        
+        // 각 구역별 "엄격함(Threshold)" 설정 (단위: 미터)
+        // 가까울수록 숫자가 작음(엄격함), 멀수록 숫자가 큼(너그러움)
+        float zone_thresholds[3] = {0.15f, 0.25f, 0.40f};
+
+        // 반복문을 3번 돌면서 구역별로 처리를 시작합니다.
+        for(int i = 0; i < 3; i++) 
+        {
+            // [1단계] 전체 데이터에서 이번 구역(Zone)만 칼로 자르듯이 잘라냅니다.
+            pcl::PointCloud<PointT>::Ptr cloud_zone(new pcl::PointCloud<PointT>);
+            pcl::PassThrough<PointT> pass;
+            pass.setInputCloud(cloud_crop);             // 전체 데이터 입력
+            pass.setFilterFieldName("x");               // 앞뒤(x축) 기준으로 자르겠다
+            pass.setFilterLimits(zone_limits[i], zone_limits[i+1]); // 예: 0m~10m
+            pass.filter(*cloud_zone);                   // 자른 결과 저장
+
+            // 만약 이 구역에 점이 하나도 없으면? (예: 하늘만 보고 있음) -> 건너뛰기
+            if (cloud_zone->empty()) continue; 
+
+            // [2단계] 잘라낸 조각 땅에서 RANSAC(평면 찾기 게임)을 돌립니다.
+            pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+            pcl::PointIndices::Ptr inliers(new pcl::PointIndices); // 바닥 점들의 번호표
+            pcl::SACSegmentation<PointT> seg;
+            
+            seg.setOptimizeCoefficients(true);          // 모델을 조금 더 정교하게 다듬어라
+            seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE); // "수직 평면"을 찾아라
+            seg.setMethodType(pcl::SAC_RANSAC);         // RANSAC 알고리즘 사용
+            seg.setMaxIterations(100);                  // 100번 시도해라
+            seg.setAxis(Eigen::Vector3f(0.0, 0.0, 1.0)); // Z축(위쪽)을 향하는 평면을 찾아라
+            seg.setEpsAngle(15.0f * (M_PI / 180.0f));   // 15도 정도 기울어진 건 봐줘라 (경사로)
+
+            // ★핵심: 거리에 따라 엄격함을 다르게 적용
+            seg.setDistanceThreshold(zone_thresholds[i]); 
+
+            seg.setInputCloud(cloud_zone);
+            seg.segment(*inliers, *coefficients);       // 실행! 바닥 점 번호를 inliers에 담음
+
+            // [3단계] 찾은 바닥을 지워버리고 장애물만 남깁니다.
+            pcl::PointCloud<PointT>::Ptr cloud_zone_obstacle(new pcl::PointCloud<PointT>);
+            pcl::ExtractIndices<PointT> extract;
+            extract.setInputCloud(cloud_zone);
+            extract.setIndices(inliers);                // 바닥 점 번호표 전달
+            extract.setNegative(true);                  // "True" = 번호표에 있는 걸 지워라! (False면 바닥만 남김)
+            extract.filter(*cloud_zone_obstacle);       // 결과물을 cloud_zone_obstacle에 저장
+
+            // [4단계] 찾은 장애물들을 최종 바구니에 쏟아 붓습니다.
+            *cloud_obstacles_total += *cloud_zone_obstacle;
+        }
+
+        // ====================================================================
+        // [중요] 이후 코드 연결을 위해 변수 이름 주의!
+        // 이제부터 KdTree나 Clustering에는 'cloud_crop'이 아니라 
+        // 바닥이 제거된 'cloud_obstacles_total'을 넣어야 합니다.
+        // ====================================================================
+
+        if (cloud_obstacles_total->empty())
+        {
+             // 장애물이 하나도 없으면 리턴 (안 하면 에러 발생 가능)
+             // 원본 등은 publish 하고 리턴하는게 좋음
+            if (publish_crop_) {
+                sensor_msgs::PointCloud2 out;
+                pcl::toROSMsg(*cloud_crop, out);
+                out.header = msg->header;
+                cloud_crop_pub_.publish(out);
+            }
+            return; 
+        }
+
         pcl::search::KdTree<PointT>::Ptr tree(new pcl::search::KdTree<PointT>);
-        tree->setInputCloud(cloud_crop);
+        tree->setInputCloud(cloud_obstacles_total);
         /*
         kdTree는 K-Dimensional Tree의 약자로, 3D 공간을 반으로 쪼개고, 쪼개서, 데이터를 트리구조로 정리해둔 자료구조
         tree라는 스마트 포인터를 생성하고, cloud_crop 데이터를 넣음.
@@ -280,7 +373,7 @@ public:
         pcl::EuclideanClusterExtraction<PointT> clustering;
         //유클리드 군집화 객체 생성
         //처리하지 않은 점 하나 선택하고 그 점과 일정 거리 이내에 있는 점들을 모두 군집화
-        clustering.setInputCloud(cloud_crop);//자른 cloud_crop 데이터를 넣음
+        clustering.setInputCloud(cloud_obstacles_total);//자른 cloud_crop 데이터를 넣음
         clustering.setClusterTolerance(cluster_tolerance_);//군집화 허용 오차 설정
         clustering.setMinClusterSize(min_cluster_size_);
         //최소 군집 크기 설정
@@ -293,7 +386,7 @@ public:
 
         pcl::PointCloud<PointT>::Ptr cloud_clustered(new pcl::PointCloud<PointT>);
         //동적 객체로 힙 영역에 군집화된 점들을 저장할 PointCloud 객체 생성
-        cloud_clustered->header = cloud_crop->header;
+        cloud_clustered->header = cloud_obstacles_total->header;
         /*
         헤더 정보 다 복사해줌.
         header에 있는 정보 : seq(메시지 번호), stamp(타임스탬프), frame_id(좌표계 이름)
@@ -304,10 +397,8 @@ public:
 
         vision_msgs::Detection3DArray detection_array;
         //발견된 물체들을 담을 Detection3DArray 메시지 객체 생성
-        detection_array.header.stamp = msg->header.stamp;
-        //원본 메시지의 타임스탬프 복사
-        detection_array.header.frame_id = msg->header.frame_id;
-        //공간 좌표계 정보 복사. Velodyne 좌표계라는 의미
+        detection_array.header = msg->header; 
+        // 헤더 안에 있는 내용물(시간, 좌표계 등)을 한 방에 복사함
 
         //찾아낸 덩어리들 하나하나 for문으로 처리
         int cluster_id = 0;
@@ -333,7 +424,7 @@ public:
 
             for (const auto &idx : indices.indices)//군집화된 점들의 인덱스 하나씩 꺼내서
             {
-                const auto &p = cloud_crop->points[idx];//cloud_crop에서 해당 인덱스의 점을 p에 저장
+                const auto &p = cloud_obstacles_total->points[idx];//cloud_crop에서 해당 인덱스의 점을 p에 저장
                 min_x = std::min(min_x, p.x);
                 max_x = std::max(max_x, p.x);
                 min_y = std::min(min_y, p.y);
@@ -415,6 +506,16 @@ public:
             out.header.stamp = msg->header.stamp;
             out.header.frame_id = msg->header.frame_id;
             cloud_crop_pub_.publish(out);//똑같은 방식으로 publish
+        }
+
+        // [추가됨] ★지면 제거된 데이터 Publish★ (이걸 봐야 RANSAC 튜닝 가능!)
+        // 이건 파라미터(bool) 확인 안 하고 그냥 무조건 보내서 확인합시다.
+        if (true) 
+        {
+            sensor_msgs::PointCloud2 out;
+            pcl::toROSMsg(*cloud_obstacles_total, out); // 바닥 제거된 데이터
+            out.header = msg->header;
+            cloud_ground_removed_pub_.publish(out);
         }
 
         if (publish_clustered_)//만약 군집화된 데이터를 publish 하기로 설정되어 있으면
