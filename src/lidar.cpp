@@ -174,8 +174,8 @@ public:
         nh_.param<float>("voxel_size", voxel_size_, 0.1f);
         nh_.param<float>("roi_min_x", roi_min_x_, -10.0f);
         nh_.param<float>("roi_max_x", roi_max_x_, 30.0f);
-        nh_.param<float>("roi_min_y", roi_min_y_, -10.0f);
-        nh_.param<float>("roi_max_y", roi_max_y_, 10.0f);
+        nh_.param<float>("roi_min_y", roi_min_y_, -6.0f);
+        nh_.param<float>("roi_max_y", roi_max_y_, 6.0f);
         nh_.param<float>("roi_min_z", roi_min_z_, -5.0f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
         nh_.param<float>("roi_max_z", roi_max_z_, 0.3f);
         nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.4f);
@@ -444,6 +444,27 @@ public:
             float size_z = max_z - min_z;
             //군집의 size 계산
             //size 계산해서 너무 작거나 크면 무시
+
+            // =========================================================
+            // [추가됨] 객체 크기 기반 필터링 (Rule-based Filtering)
+            // =========================================================
+
+            // 1. "덜 지워진 바닥/방지턱" 제거 (높이 필터)
+            // 높이가 30cm도 안 되는 납작한 건 무시 (사람 발목 높이)
+            if (size_z < 0.3f) 
+            { 
+                cluster_id++; 
+                continue; 
+            }
+
+            // 2. "벽(Wall) / 펜스" 제거 (크기 필터)
+            // 가로, 세로 길이가 10m를 넘어가면 차나 사람이 아님 -> 벽일 확률 99%
+            // (버스나 트럭을 고려해서 12m 정도로 설정)
+            if (size_x > 12.0f || size_y > 12.0f) 
+            { 
+                cluster_id++; 
+                continue; 
+            }
 
             if (size_y < 0.3f || size_y > 1.5f || size_z > 2.0f)
             //너무 thin 하거나 너무 fat 하거나 너무 높으면
