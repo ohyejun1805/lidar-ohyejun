@@ -930,7 +930,6 @@ private:
             marker.header = tracked_array.header;
             marker.ns = "tracked_objects"; 
 
-            int track_id = (det.results.empty() ? (int)i : det.results[0].id);
             marker.id = track_id;
 
             marker.type = visualization_msgs::Marker::CUBE;
