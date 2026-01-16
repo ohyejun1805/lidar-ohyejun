@@ -94,6 +94,16 @@ With Pose(위치/자세) : 그리고 내 차 기준으로 어디 위치에 서 �
 위에 딥러닝이나 클러스터링 결과로 나온 class id(물체 종류)와 score(신뢰도), 그리고 Pose(좌표)를 여기에 채워 넣습니다.
 */
 
+// 지면 제거 추가해야 할 헤더들
+#include <pcl/segmentation/sac_segmentation.h> // RANSAC 알고리즘
+#include <pcl/filters/extract_indices.h>       // 인덱스 추출 (지면/장애물 분리)
+#include <pcl/filters/passthrough.h>           // 영역 자르기 (Zone 나누기)
+
+//회전 정보 포함 시 추가할 헤더
+#include <pcl/common/pca.h>        // PCA 알고리즘
+#include <pcl/common/common.h>     // Min/Max 계산용
+#include <pcl/common/transforms.h> // 점구름 회전/이동 변환용
+
 using PointT = pcl::PointXYZI;
 // XYZ 좌표에 intensity(강도)까지 변수로 가지는 Point 사용 (intensity는 차선 식별에 도움을 주는 변수)
 
@@ -131,6 +141,10 @@ private:
     //송신자인데 downsampling, voxelgrid을 거쳐 점 개수가 줄어든 데이터 보내는 것.
     ros::Publisher cloud_crop_pub_;
     //송신자(크롭) Cropbox를 거쳐서 관심 영역만 남은 데이터를 내보냄.
+
+    // [추가됨] 지면 제거된 데이터 확인용 Publisher
+    ros::Publisher cloud_ground_removed_pub_;
+
     ros::Publisher cloud_cluster_pub_;
     //송신자(군집화), 물체별로 색깔이 칠해진 최종 점구름 데이터를 보냅니다. 
     ros::Publisher bbox_pub_;
@@ -162,14 +176,14 @@ public:
         <타입>은 템플릿 타입, "파라미터 이름"은 파라미터 서버에서 찾을 이름이고,
         변수는 값을 저장할 변수, true는 기본값값
         */
-        nh_.param<float>("voxel_size", voxel_size_, 0.1f);
+        nh_.param<float>("voxel_size", voxel_size_, 0.12f);
         nh_.param<float>("roi_min_x", roi_min_x_, -10.0f);
         nh_.param<float>("roi_max_x", roi_max_x_, 30.0f);
-        nh_.param<float>("roi_min_y", roi_min_y_, -10.0f);
-        nh_.param<float>("roi_max_y", roi_max_y_, 10.0f);
-        nh_.param<float>("roi_min_z", roi_min_z_, -1.8f);
+        nh_.param<float>("roi_min_y", roi_min_y_, -6.0f);
+        nh_.param<float>("roi_max_y", roi_max_y_, 6.0f);
+        nh_.param<float>("roi_min_z", roi_min_z_, -5.0f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
         nh_.param<float>("roi_max_z", roi_max_z_, 0.3f);
-        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.4f);
+        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.6f);
         nh_.param<int>("min_cluster_size", min_cluster_size_, 3);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 6000);
         //ROS 파라미터에서 값을 읽고, 없으면 기본값을 넣는다.
@@ -185,6 +199,10 @@ public:
         cloud_origin_pub_  = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_origin", 1);
         cloud_down_pub_    = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_downsampled", 1);
         cloud_crop_pub_    = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_roi", 1);
+
+        // [추가됨] 지면 제거 확인용 토픽 생성
+        cloud_ground_removed_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_ground_removed", 1);
+
         cloud_cluster_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_clustered", 1);
         /*
         advertise라는 함수인데 라이다 점군 데이터를 타입으로 하는 함수다. 
@@ -267,8 +285,114 @@ public:
         crop_filter.filter(*cloud_crop);
         //이 관심 영역 안에 있는 점들만 cloud_crop에 넣음.
 
+        // ---------------------------------------------------------
+        // [수정됨] 3-Zone RANSAC Ground Removal (보급형 Patchwork)
+        // ---------------------------------------------------------
+        
+        // 최종적으로 "장애물(바닥 아님)"만 모을 점구름 통을 만듭니다.
+        pcl::PointCloud<PointT>::Ptr cloud_obstacles_total(new pcl::PointCloud<PointT>);
+
+        // 3개의 구역을 설정합니다. (단위: 미터)
+        // Zone 1: roi_min_x ~ 10m (가까운 곳)
+        // Zone 2: 10m ~ 25m (중간)
+        // Zone 3: 25m ~ roi_max_x (먼 곳)
+        float zone_limits[4] = {roi_min_x_, 10.0f, 25.0f, roi_max_x_};
+        
+        // 각 구역별 "엄격함(Threshold)" 설정 (단위: 미터)
+        // 가까울수록 숫자가 작음(엄격함), 멀수록 숫자가 큼(너그러움)
+        float zone_thresholds[3] = {0.15f, 0.25f, 0.35f};
+
+        // 반복문을 3번 돌면서 구역별로 처리를 시작합니다.
+        for(int i = 0; i < 3; i++) 
+        {
+            // [1단계] 전체 데이터에서 이번 구역(Zone)만 칼로 자르듯이 잘라냅니다.
+            //pcl에서 많이 사용하는 필터링 도구 : PassThrough
+            pcl::PointCloud<PointT>::Ptr cloud_zone(new pcl::PointCloud<PointT>);
+            pcl::PassThrough<PointT> pass;
+            pass.setInputCloud(cloud_crop);             
+            // 전체 데이터 입력
+            pass.setFilterFieldName("x");               
+            // 앞뒤(x축) 기준으로 자르겠다
+            pass.setFilterLimits(zone_limits[i], zone_limits[i+1]); 
+            // 예: 0m~10m
+            pass.filter(*cloud_zone);                   
+            // 자른 결과 저장
+
+            // 만약 이 구역에 점이 하나도 없으면? (예: 하늘만 보고 있음) -> 건너뛰기
+            if (cloud_zone->empty()) continue; 
+
+            // [2단계] 잘라낸 조각 땅에서 RANSAC(평면 찾기 게임)을 돌립니다.
+            pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+            //평면 방정식 저장
+            pcl::PointIndices::Ptr inliers(new pcl::PointIndices); 
+            // 바닥 점들의 번호표
+            pcl::SACSegmentation<PointT> seg;
+            //이제 데이터 더미들에서 내가 원하는 평면을 찾기 위함.
+            
+            seg.setOptimizeCoefficients(true);          
+            // 모델을 조금 더 정교하고 깔끔하게 다듬는 역할할
+            seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE); 
+            // "수직 평면"을 찾아라
+            // PERPENDICULAR_PLANE 특정 축과 수직인 평면을 찾으라고 지점함.
+            seg.setMethodType(pcl::SAC_RANSAC);         
+            // RANSAC 알고리즘 사용
+            // RANSAC 알고리즘 : 무작위 점 3개를 뽑아 평면 만들고, 나머지 점들이 얼마나 포함되나.
+            seg.setMaxIterations(200);                  
+            // 100번 시도해라
+            // 너무 많이 하면 느려지고, 너무 적게 하면 잘 못찾음 100~1000 사이이
+            seg.setAxis(Eigen::Vector3f(0.0, 0.0, 1.0)); 
+            // Z축(위쪽)을 향하는 평면을 찾아라
+            seg.setEpsAngle(12.0f * (M_PI / 180.0f));   
+            // 15도 정도 기울어진 건 봐줘라 (경사로)
+
+            seg.setDistanceThreshold(zone_thresholds[i]); 
+            // 핵심: 거리에 따라 엄격함을 다르게 적용
+            // 바닥 두께를 어느정도로 설정할거냐 아까 위에서 다 다르게 적용함.
+            // 예를들어서 0.15m면 15cm니까 아스팔트 울퉁불퉁한거 15cm 까지는 바닥으로 친다.
+            // 너무 두껍게 하면 막 도보도 날려버릴 수도 있지.
+
+            seg.setInputCloud(cloud_zone);
+            seg.segment(*inliers, *coefficients);   
+            // coefficients에는 찾은 바닥 평면 방정식 계수들이 담겨 있음.    
+            // 바닥으로 판명된 점 번호를 inliers에 담음
+
+            // [3단계] 찾은 바닥을 지워버리고 장애물만 남깁니다.
+            pcl::PointCloud<PointT>::Ptr cloud_zone_obstacle(new pcl::PointCloud<PointT>);
+            pcl::ExtractIndices<PointT> extract;
+            //ExtractIndices는 점들을 집어서 거름.
+            extract.setInputCloud(cloud_zone);
+            extract.setIndices(inliers);                
+            // 바닥 점 번호표 전달
+            extract.setNegative(true);                  
+            // "True" = 번호표에 있는 걸 지워라! (False면 바닥만 남김)
+            extract.filter(*cloud_zone_obstacle);       
+            // 결과물을 cloud_zone_obstacle에 저장
+
+            // [4단계] 찾은 장애물들을 최종 바구니에 쏟아 붓습니다.
+            *cloud_obstacles_total += *cloud_zone_obstacle;
+        }
+
+        // ====================================================================
+        // [중요] 이후 코드 연결을 위해 변수 이름 주의!
+        // 이제부터 KdTree나 Clustering에는 'cloud_crop'이 아니라 
+        // 바닥이 제거된 'cloud_obstacles_total'을 넣어야 합니다.
+        // ====================================================================
+
+        if (cloud_obstacles_total->empty())
+        {
+             // 장애물이 하나도 없으면 리턴 (안 하면 에러 발생 가능)
+             // 원본 등은 publish 하고 리턴하는게 좋음
+            if (publish_crop_) {
+                sensor_msgs::PointCloud2 out;
+                pcl::toROSMsg(*cloud_crop, out);
+                out.header = msg->header;
+                cloud_crop_pub_.publish(out);
+            }
+            return; 
+        }
+
         pcl::search::KdTree<PointT>::Ptr tree(new pcl::search::KdTree<PointT>);
-        tree->setInputCloud(cloud_crop);
+        tree->setInputCloud(cloud_obstacles_total);
         /*
         kdTree는 K-Dimensional Tree의 약자로, 3D 공간을 반으로 쪼개고, 쪼개서, 데이터를 트리구조로 정리해둔 자료구조
         tree라는 스마트 포인터를 생성하고, cloud_crop 데이터를 넣음.
@@ -280,7 +404,7 @@ public:
         pcl::EuclideanClusterExtraction<PointT> clustering;
         //유클리드 군집화 객체 생성
         //처리하지 않은 점 하나 선택하고 그 점과 일정 거리 이내에 있는 점들을 모두 군집화
-        clustering.setInputCloud(cloud_crop);//자른 cloud_crop 데이터를 넣음
+        clustering.setInputCloud(cloud_obstacles_total);//자른 cloud_crop 데이터를 넣음
         clustering.setClusterTolerance(cluster_tolerance_);//군집화 허용 오차 설정
         clustering.setMinClusterSize(min_cluster_size_);
         //최소 군집 크기 설정
@@ -293,7 +417,7 @@ public:
 
         pcl::PointCloud<PointT>::Ptr cloud_clustered(new pcl::PointCloud<PointT>);
         //동적 객체로 힙 영역에 군집화된 점들을 저장할 PointCloud 객체 생성
-        cloud_clustered->header = cloud_crop->header;
+        cloud_clustered->header = cloud_obstacles_total->header;
         /*
         헤더 정보 다 복사해줌.
         header에 있는 정보 : seq(메시지 번호), stamp(타임스탬프), frame_id(좌표계 이름)
@@ -304,78 +428,137 @@ public:
 
         vision_msgs::Detection3DArray detection_array;
         //발견된 물체들을 담을 Detection3DArray 메시지 객체 생성
-        detection_array.header.stamp = msg->header.stamp;
-        //원본 메시지의 타임스탬프 복사
-        detection_array.header.frame_id = msg->header.frame_id;
-        //공간 좌표계 정보 복사. Velodyne 좌표계라는 의미
+        detection_array.header = msg->header; 
+        // 헤더 안에 있는 내용물(시간, 좌표계 등)을 한 방에 복사함
 
-        //찾아낸 덩어리들 하나하나 for문으로 처리
         int cluster_id = 0;
+        // [수정됨] PCA를 적용한 반복문 시작
         for (const auto &indices : cluster_indices)
-        /*
-        extract에서 채워진 cluster_indices 벡터에서 하나씩 꺼내서
-        indices 라는 변수에 저장하면서 반복문 실행
-        */
+        //for 문을 군집화 결과(cluster_indices)를 indices에 하나씩 담고 돌린다.
         {
-            if (indices.indices.empty())//군집화된 인덱스가 비어있으면
+            if (indices.indices.empty()) { cluster_id++; continue; }
+            // 아무것도 없으면, 무시하고 다음 번호로 넘어감.
+
+            // -------------------------------------------------------------
+            // Step 1: 현재 군집의 점들을 별도의 PointCloud로 추출
+            // -------------------------------------------------------------
+            pcl::PointCloud<PointT>::Ptr cluster_cloud(new pcl::PointCloud<PointT>);
+            //현재 처리할 point cloud만 담는 cluter_cloud 만든다.
+            //ptr 스마트 포인터
+
+            for (const auto &idx : indices.indices)
+            //군집에 속한 점들 포인트들을 하나씩 꺼내서 idx에 넣음.
             {
-                cluster_id++;//다음 군집으로 넘어감
-                continue;
+                // ★중요: 지면이 제거된 'cloud_obstacles_total'에서 점을 가져와야 함
+                const auto &p = cloud_obstacles_total->points[idx]; 
+                cluster_cloud->points.push_back(p);
             }
 
-            //어떤값이 들어와도 min또는 max가 되도록 초기값을 양극단으로 설정
-            float min_x = std::numeric_limits<float>::max();
-            float max_x = std::numeric_limits<float>::lowest();
-            float min_y = std::numeric_limits<float>::max();
-            float max_y = std::numeric_limits<float>::lowest();
-            float min_z = std::numeric_limits<float>::max();
-            float max_z = std::numeric_limits<float>::lowest();
+            // 점 개수가 너무 적으면 PCA 계산 시 에러가 날 수 있음 (최소 3~4개 필요)
+            if (cluster_cloud->size() < 4) { cluster_id++; continue; }
 
-            for (const auto &idx : indices.indices)//군집화된 점들의 인덱스 하나씩 꺼내서
+            // -------------------------------------------------------------
+            // Step 2: PCA (주성분 분석) 계산
+            // -------------------------------------------------------------
+            pcl::PCA<PointT> pca;
+            pca.setInputCloud(cluster_cloud);
+
+            // EigenVectors: 물체의 주축 (회전 방향)
+            // EigenValues: 분산 크기
+            // Centroid: 물체의 중심점 (x, y, z)
+            Eigen::Matrix3f eigen_vectors = pca.getEigenVectors();
+            /*
+            3x3 행렬이고,
+            getEigenVectors는 물체의 주축을 3개 뽑아냄.
+            1열은 제일 긴 방향 (ex. 자동차 앞뒤)
+            2열은 두 번째 긴 방향 (ex. 자동차 좌우)
+            3열은 제일 짧은 방향 (ex. 자동차 높이)
+            */
+            Eigen::Vector4f centroid = pca.getMean(); 
+            //getMean() : 점들의 평균, 무게 중심을 구해줌.
+
+            // -------------------------------------------------------------
+            // Step 3: 회전 정보 (Quaternion) 추출
+            // -------------------------------------------------------------
+            // PCA의 고유벡터(Eigenvectors)는 바로 회전 행렬(Rotation Matrix)과 같습니다.
+            // 이를 ROS 메시지 규격인 Quaternion(x, y, z, w)으로 변환합니다.
+            Eigen::Quaternionf q(eigen_vectors);
+            //3x3 행렬인 eigen_vector를 퀴터니언(x,y,z,w) 형태로 변환
+            //쿼터니언은 x,y,z 축 별로 회전 정보에 직접적인 회전값 w를 포함한 것.
+
+            q.normalize(); 
+            // 방향 벡터 정규화 (필수)
+            // 회전 정보 크기를 1로 맞춰서 계산 오류 방지함.
+
+            // -------------------------------------------------------------
+            // Step 4: 크기 (Size) 정밀 계산 - "Rotate to Measure"
+            // -------------------------------------------------------------
+            // 그냥 min/max를 하면 AABB(뚱뚱한 박스)가 됩니다.
+            // 물체를 원점으로 가져와서, 주축에 맞춰 똑바로 세운 뒤에 크기를 재야 합니다.
+                
+            pcl::PointCloud<PointT>::Ptr transformed_cloud(new pcl::PointCloud<PointT>);
+            //똑바로 세운 점들을 담을 새 스마트 포인터 그릇 transformed_cloud 만듦
+            Eigen::Matrix4f transform_matrix = Eigen::Matrix4f::Identity();
+            //4x4 변환 행렬 생성성    
+
+            transform_matrix.block<3, 3>(0, 0) = eigen_vectors.transpose(); 
+            // (1) 회전 역행렬: 물체를 똑바로 세움
+            //물체가 오른쪽으로 30도 돌아있으면, 왼쪽으로 다시 30도 돌려주는것임.
+
+            transform_matrix.block<3, 1>(0, 3) = -1.0f * (transform_matrix.block<3,3>(0,0) * centroid.head<3>());
+            // (2) 이동 역행렬: 물체 중심을 (0,0,0)으로 가져옴
+            // 수식이 복잡함..
+
+            // 점구름 변환 실행
+            pcl::transformPointCloud(*cluster_cloud, *transformed_cloud, transform_matrix);
+            //원본 점들 (cluster_cloud)에 행렬 (transformed_matrix) 곱해서 
+            //원점에 똑바로 서 있는 transformed_cloud 를 만들어줌.
+
+            // 변환된(똑바로 선) 상태에서 최솟값, 최댓값 구하기
+            PointT min_pt, max_pt;
+            pcl::getMinMax3D(*transformed_cloud, min_pt, max_pt);
+            //getMinMax3D : 포인트 클라우드 점군을 축 별로 최대값 최솟값 뽑아내는 함수
+
+            // 진짜 길이, 너비, 높이 계산
+            float size_x = std::abs(max_pt.x - min_pt.x);
+            float size_y = std::abs(max_pt.y - min_pt.y);
+            float size_z = std::abs(max_pt.z - min_pt.z);
+            //abs는 절댓값 붙이는건데 혹시 음수 나올까봐 만약을 대비해서 하는것임.
+
+            // -------------------------------------------------------------
+            // Step 5: 필터링 및 메시지 생성
+            // -------------------------------------------------------------
+                
+            // [필터링] 너무 납작하거나(노이즈), 너무 거대한(벽) 물체 제거
+            //if (size_z < 0.3f) { cluster_id++; continue; } // 높이 30cm 미만 제거
+            if (size_x > 15.0f || size_y > 15.0f) { cluster_id++; continue; } // 12m 이상 벽 제거
+
+            // 필터링을 통과한 "진짜 물체"만 Rviz에 색칠해서 보여줌
+            for (const auto &p : cluster_cloud->points)
             {
-                const auto &p = cloud_crop->points[idx];//cloud_crop에서 해당 인덱스의 점을 p에 저장
-                min_x = std::min(min_x, p.x);
-                max_x = std::max(max_x, p.x);
-                min_y = std::min(min_y, p.y);
-                max_y = std::max(max_y, p.y);
-                min_z = std::min(min_z, p.z);
-                max_z = std::max(max_z, p.z);//각 축별 최소값과 최대값 갱신
-
-                PointT q = p;//원본 점은 바꾸면 안되니까 복사본 q 생성
-                q.intensity = static_cast<float>(cluster_id);
-                //intensity 값을 군집 아이디로 설정해서 색깔 다르게 만듬.
-                cloud_clustered->points.push_back(q);
-                //cloud_clustered에 q점 추가
+                PointT q_point = p;
+                q_point.intensity = static_cast<float>(cluster_id);
+                cloud_clustered->points.push_back(q_point);
             }
 
-            float size_x = max_x - min_x;
-            float size_y = max_y - min_y;
-            float size_z = max_z - min_z;
-            //군집의 size 계산
-            //size 계산해서 너무 작거나 크면 무시
+            vision_msgs::Detection3D detection;
+            detection.header = detection_array.header;
 
-            if (size_y < 0.3f || size_y > 1.5f || size_z > 2.0f)
-            //너무 thin 하거나 너무 fat 하거나 너무 높으면
-            {
-                cluster_id++;
-                continue;//다음
-            }
+            // 위치: PCA로 구한 무게중심(Centroid) 사용
+            detection.bbox.center.position.x = centroid[0];
+            detection.bbox.center.position.y = centroid[1];
+            detection.bbox.center.position.z = centroid[2];
 
-            vision_msgs::Detection3D detection;//detection3D 메시지 객체 생성
-            detection.header = detection_array.header;//헤더 정보 복사
+            // 회전: PCA로 구한 Quaternion 사용
+            detection.bbox.center.orientation.x = q.x();
+            detection.bbox.center.orientation.y = q.y();
+            detection.bbox.center.orientation.z = q.z();
+            detection.bbox.center.orientation.w = q.w();
 
-            detection.bbox.center.position.x = (min_x + max_x) * 0.5f;
-            detection.bbox.center.position.y = (min_y + max_y) * 0.5f;
-            detection.bbox.center.position.z = (min_z + max_z) * 0.5f;
-            //박스의 중심 좌표 계산
-            detection.bbox.center.orientation.w = 1.0;
-            //회전 정보 Quaternion으로 표현, 회전이 없으면 w=1.0, x=y=z=0.0
-            //근데 왜 회전 정보가 없지? 계산 속도 때문에 생략한 듯. 
-            //PCA(주성분 분석)으로 회전 정보도 구할 수 있지만 계산량이 많아짐.
+            // 크기: 정밀 계산한 Size 사용
             detection.bbox.size.x = size_x;
-            detection.bbox.size.y = size_y * 1.2f;
-            detection.bbox.size.z = size_z * 1.5f;
-            //y축과 z축 크기는 살짝 여유를 줌.
+            detection.bbox.size.y = size_y;
+            detection.bbox.size.z = size_z;
 
             //물체 클래스와 신뢰도 점수 설정
             vision_msgs::ObjectHypothesisWithPose hypothesis;
@@ -415,6 +598,16 @@ public:
             out.header.stamp = msg->header.stamp;
             out.header.frame_id = msg->header.frame_id;
             cloud_crop_pub_.publish(out);//똑같은 방식으로 publish
+        }
+
+        // [추가됨] ★지면 제거된 데이터 Publish★ (이걸 봐야 RANSAC 튜닝 가능!)
+        // 이건 파라미터(bool) 확인 안 하고 그냥 무조건 보내서 확인합시다.
+        if (true) 
+        {
+            sensor_msgs::PointCloud2 out;
+            pcl::toROSMsg(*cloud_obstacles_total, out); // 바닥 제거된 데이터
+            out.header = msg->header;
+            cloud_ground_removed_pub_.publish(out);
         }
 
         if (publish_clustered_)//만약 군집화된 데이터를 publish 하기로 설정되어 있으면

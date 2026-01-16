@@ -145,21 +145,12 @@ public:
         //x, y, z 위치 3개만 관측하도록 설정
         
         // 프로세스 노이즈 (작을수록 예측을 더 신뢰)
-        Q_ = Eigen::MatrixXd::Identity(6, 6) * 0.1;
+        Q_ = Eigen::MatrixXd::Identity(6, 6);
         /* 프로세스 노이즈를 단위 행렬 * 0.1로 설정
         위치에 대한 노이즈는 0.1로 작게 설정 (위치는 예측이 잘 됨)
         */
-        Q_(3, 3) = 0.5;  // 속도 노이즈
-        /* Q_의 (3, 3) 위치에 0.5 설정
-        이건 x 방향 속도에 대한 노이즈
-        속도는 위치보다 예측하기 어려우니까 노이즈를 더 크게 설정
-        */
-        Q_(4, 4) = 0.5;
-        /* y 방향 속도에 대한 노이즈도 0.5로 설정
-        */
-        Q_(5, 5) = 0.5;
-        /* z 방향 속도에 대한 노이즈도 0.5로 설정
-        */
+        Q_(0, 0) *= 0.1; Q_(1, 1) *= 0.1; Q_(2, 2) *= 0.1; // 위치 노이즈
+        Q_(3, 3) *= 5.0; Q_(4, 4) *= 5.0; Q_(5, 5) *= 5.0; // 속도 노이즈 (대폭 상향!)
         
         // 관측 노이즈 (LiDAR 측정 불확실성)
         R_ = Eigen::MatrixXd::Identity(3, 3) * 0.3;
@@ -189,7 +180,7 @@ public:
         state_(5) = 0.0;
 
         
-        P_ = Eigen::MatrixXd::Identity(6, 6) * 100.0;
+        P_ = Eigen::MatrixXd::Identity(6, 6) * 500.0;
         /* 공분산 행렬을 단위 행렬 * 100으로 설정
         생성자에서 1000이었는데 여기서는 100으로 줄임
         첫 측정값이 들어왔으니 불확실성을 조금 줄임
@@ -695,6 +686,9 @@ private:
         block<3, 3>(0, 0)는 (0, 0) 위치에서 3x3 크기만큼 추출
         */
         
+        // 역행렬 계산 실패 방지를 위한 안전장치
+         if(S.determinant() < 1e-6) return 100.0; // 강제로 큰 거리 반환
+
         // Mahalanobis 거리 = sqrt((x - mu)^T * S^(-1) * (x - mu))
         Eigen::Matrix3d S_inv = S.inverse();
         /* 공분산 행렬의 역행렬 계산
@@ -883,10 +877,16 @@ private:
             (matched_tracks[i] >= 0은 매칭됨을 의미)
             */
             {
-                det_matched[matched_tracks[i]] = true;
-                /* 해당 detection을 매칭됨으로 표시
-                matched_tracks[i]는 detection의 인덱스
-                */
+                // 매칭은 됐지만 거리가 너무 멀면 취소하는 로직 추가
+                double cost = cost_matrix[i][matched_tracks[i]];
+                if (cost > max_mahalanobis_distance_) 
+                {
+                    matched_tracks[i] = -1; // 매칭 취소
+                } 
+                else 
+                {
+                    det_matched[matched_tracks[i]] = true;
+                }
             }
         }
         
@@ -912,9 +912,16 @@ private:
     {
         visualization_msgs::MarkerArray marker_array;
 
+        // 마커 초기화 (이전 마커 삭제)
+        visualization_msgs::Marker delete_marker;
+        delete_marker.action = visualization_msgs::Marker::DELETEALL;
+        marker_array.markers.push_back(delete_marker);
+
         for (size_t i = 0; i < tracked_array.detections.size(); ++i)
         {
             const auto& det = tracked_array.detections[i];
+            int track_id = (det.results.empty() ? -1 : det.results[0].id);
+            if (track_id == -1) continue;
 
             // -------------------------------------------
             // 1. 파란색 박스 (기존 코드)
@@ -923,7 +930,6 @@ private:
             marker.header = tracked_array.header;
             marker.ns = "tracked_objects"; 
 
-            int track_id = (det.results.empty() ? (int)i : det.results[0].id);
             marker.id = track_id;
 
             marker.type = visualization_msgs::Marker::CUBE;
@@ -937,7 +943,7 @@ private:
             marker.color.b = 1.0f;
             marker.color.a = 0.6f;
 
-            marker.lifetime = ros::Duration(0.2);
+            marker.lifetime = ros::Duration(0.15);
 
             marker_array.markers.push_back(marker);
 
@@ -1019,7 +1025,7 @@ private:
         /* 모든 트랙에 대해
         */
         {
-            if (track.disappeared_count > 0)
+            if (track.disappeared_count >= 0)
             /* 사라진 트랙이면
             (disappeared_count > 0은 이전 프레임에서도 안 보였다는 의미)
             */
@@ -1126,15 +1132,15 @@ public:
         */
         
         // 파라미터 로드
-        nh_.param<float>("max_mahalanobis_distance", max_mahalanobis_distance_, 3.0f);
+        nh_.param<float>("max_mahalanobis_distance", max_mahalanobis_distance_, 5.0f);
         /* ROS 파라미터 서버에서 max_mahalanobis_distance 값을 읽어옴
         없으면 기본값 3.0 사용
         */
-        nh_.param<float>("max_disappeared_frames", max_disappeared_frames_, 5.0f);
+        nh_.param<float>("max_disappeared_frames", max_disappeared_frames_, 3.0f);
         /* max_disappeared_frames 파라미터 읽기
         없으면 기본값 5 사용
         */
-        nh_.param<float>("gating_threshold", gating_threshold_, 9.0f);  // chi-square 3 DOF, 99% 신뢰도
+        nh_.param<float>("gating_threshold", gating_threshold_, 20.0f);  // chi-square 3 DOF, 99% 신뢰도
         /* gating_threshold 파라미터 읽기
         없으면 기본값 9.0 사용
         chi-square 분포에서 3 자유도, 99% 신뢰도 기준
@@ -1227,18 +1233,18 @@ public:
             /* 오래 사라진 트랙들을 제거
             */
             
-            vision_msgs::Detection3DArray tracked_array;
+            vision_msgs::Detection3DArray empty_array;
             /* 빈 트래킹 결과 배열 생성
             */
-            tracked_array.header = msg->header;
+            empty_array.header = msg->header;
             /* 헤더 정보 복사 (타임스탬프, 좌표계 등)
             */
-            tracking_pub_.publish(tracked_array);
+            tracking_pub_.publish(empty_array);
             /* 빈 결과를 발행
             (객체가 없으니까)
             */
             // RViz용 MarkerArray도 비운 상태로 발행
-            publishMarkers(tracked_array);
+            publishMarkers(empty_array);
 
             return;
             /* 함수 종료
