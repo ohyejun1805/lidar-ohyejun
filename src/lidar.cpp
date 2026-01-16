@@ -295,47 +295,73 @@ public:
         
         // 각 구역별 "엄격함(Threshold)" 설정 (단위: 미터)
         // 가까울수록 숫자가 작음(엄격함), 멀수록 숫자가 큼(너그러움)
-        float zone_thresholds[3] = {0.15f, 0.25f, 0.40f};
+        float zone_thresholds[3] = {0.15f, 0.25f, 0.35f};
 
         // 반복문을 3번 돌면서 구역별로 처리를 시작합니다.
         for(int i = 0; i < 3; i++) 
         {
             // [1단계] 전체 데이터에서 이번 구역(Zone)만 칼로 자르듯이 잘라냅니다.
+            //pcl에서 많이 사용하는 필터링 도구 : PassThrough
             pcl::PointCloud<PointT>::Ptr cloud_zone(new pcl::PointCloud<PointT>);
             pcl::PassThrough<PointT> pass;
-            pass.setInputCloud(cloud_crop);             // 전체 데이터 입력
-            pass.setFilterFieldName("x");               // 앞뒤(x축) 기준으로 자르겠다
-            pass.setFilterLimits(zone_limits[i], zone_limits[i+1]); // 예: 0m~10m
-            pass.filter(*cloud_zone);                   // 자른 결과 저장
+            pass.setInputCloud(cloud_crop);             
+            // 전체 데이터 입력
+            pass.setFilterFieldName("x");               
+            // 앞뒤(x축) 기준으로 자르겠다
+            pass.setFilterLimits(zone_limits[i], zone_limits[i+1]); 
+            // 예: 0m~10m
+            pass.filter(*cloud_zone);                   
+            // 자른 결과 저장
 
             // 만약 이 구역에 점이 하나도 없으면? (예: 하늘만 보고 있음) -> 건너뛰기
             if (cloud_zone->empty()) continue; 
 
             // [2단계] 잘라낸 조각 땅에서 RANSAC(평면 찾기 게임)을 돌립니다.
             pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
-            pcl::PointIndices::Ptr inliers(new pcl::PointIndices); // 바닥 점들의 번호표
+            //평면 방정식 저장
+            pcl::PointIndices::Ptr inliers(new pcl::PointIndices); 
+            // 바닥 점들의 번호표
             pcl::SACSegmentation<PointT> seg;
+            //이제 데이터 더미들에서 내가 원하는 평면을 찾기 위함.
             
-            seg.setOptimizeCoefficients(true);          // 모델을 조금 더 정교하게 다듬어라
-            seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE); // "수직 평면"을 찾아라
-            seg.setMethodType(pcl::SAC_RANSAC);         // RANSAC 알고리즘 사용
-            seg.setMaxIterations(100);                  // 100번 시도해라
-            seg.setAxis(Eigen::Vector3f(0.0, 0.0, 1.0)); // Z축(위쪽)을 향하는 평면을 찾아라
-            seg.setEpsAngle(15.0f * (M_PI / 180.0f));   // 15도 정도 기울어진 건 봐줘라 (경사로)
+            seg.setOptimizeCoefficients(true);          
+            // 모델을 조금 더 정교하고 깔끔하게 다듬는 역할할
+            seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE); 
+            // "수직 평면"을 찾아라
+            // PERPENDICULAR_PLANE 특정 축과 수직인 평면을 찾으라고 지점함.
+            seg.setMethodType(pcl::SAC_RANSAC);         
+            // RANSAC 알고리즘 사용
+            // RANSAC 알고리즘 : 무작위 점 3개를 뽑아 평면 만들고, 나머지 점들이 얼마나 포함되나.
+            seg.setMaxIterations(200);                  
+            // 100번 시도해라
+            // 너무 많이 하면 느려지고, 너무 적게 하면 잘 못찾음 100~1000 사이이
+            seg.setAxis(Eigen::Vector3f(0.0, 0.0, 1.0)); 
+            // Z축(위쪽)을 향하는 평면을 찾아라
+            seg.setEpsAngle(15.0f * (M_PI / 180.0f));   
+            // 15도 정도 기울어진 건 봐줘라 (경사로)
 
-            // ★핵심: 거리에 따라 엄격함을 다르게 적용
             seg.setDistanceThreshold(zone_thresholds[i]); 
+            // 핵심: 거리에 따라 엄격함을 다르게 적용
+            // 바닥 두께를 어느정도로 설정할거냐 아까 위에서 다 다르게 적용함.
+            // 예를들어서 0.15m면 15cm니까 아스팔트 울퉁불퉁한거 15cm 까지는 바닥으로 친다.
+            // 너무 두껍게 하면 막 도보도 날려버릴 수도 있지.
 
             seg.setInputCloud(cloud_zone);
-            seg.segment(*inliers, *coefficients);       // 실행! 바닥 점 번호를 inliers에 담음
+            seg.segment(*inliers, *coefficients);   
+            // coefficients에는 찾은 바닥 평면 방정식 계수들이 담겨 있음.    
+            // 바닥으로 판명된 점 번호를 inliers에 담음
 
             // [3단계] 찾은 바닥을 지워버리고 장애물만 남깁니다.
             pcl::PointCloud<PointT>::Ptr cloud_zone_obstacle(new pcl::PointCloud<PointT>);
             pcl::ExtractIndices<PointT> extract;
+            //ExtractIndices는 점들을 집어서 거름.
             extract.setInputCloud(cloud_zone);
-            extract.setIndices(inliers);                // 바닥 점 번호표 전달
-            extract.setNegative(true);                  // "True" = 번호표에 있는 걸 지워라! (False면 바닥만 남김)
-            extract.filter(*cloud_zone_obstacle);       // 결과물을 cloud_zone_obstacle에 저장
+            extract.setIndices(inliers);                
+            // 바닥 점 번호표 전달
+            extract.setNegative(true);                  
+            // "True" = 번호표에 있는 걸 지워라! (False면 바닥만 남김)
+            extract.filter(*cloud_zone_obstacle);       
+            // 결과물을 cloud_zone_obstacle에 저장
 
             // [4단계] 찾은 장애물들을 최종 바구니에 쏟아 붓습니다.
             *cloud_obstacles_total += *cloud_zone_obstacle;
