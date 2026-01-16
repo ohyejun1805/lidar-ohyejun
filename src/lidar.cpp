@@ -171,14 +171,14 @@ public:
         <타입>은 템플릿 타입, "파라미터 이름"은 파라미터 서버에서 찾을 이름이고,
         변수는 값을 저장할 변수, true는 기본값값
         */
-        nh_.param<float>("voxel_size", voxel_size_, 0.1f);
+        nh_.param<float>("voxel_size", voxel_size_, 0.2f);
         nh_.param<float>("roi_min_x", roi_min_x_, -10.0f);
         nh_.param<float>("roi_max_x", roi_max_x_, 30.0f);
         nh_.param<float>("roi_min_y", roi_min_y_, -6.0f);
         nh_.param<float>("roi_max_y", roi_max_y_, 6.0f);
         nh_.param<float>("roi_min_z", roi_min_z_, -5.0f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
         nh_.param<float>("roi_max_z", roi_max_z_, 0.3f);
-        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.4f);
+        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.8f);
         nh_.param<int>("min_cluster_size", min_cluster_size_, 3);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 6000);
         //ROS 파라미터에서 값을 읽고, 없으면 기본값을 넣는다.
