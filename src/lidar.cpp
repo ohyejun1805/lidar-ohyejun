@@ -171,7 +171,7 @@ public:
         <타입>은 템플릿 타입, "파라미터 이름"은 파라미터 서버에서 찾을 이름이고,
         변수는 값을 저장할 변수, true는 기본값값
         */
-        nh_.param<float>("voxel_size", voxel_size_, 0.2f);
+        nh_.param<float>("voxel_size", voxel_size_, 0.12f);
         nh_.param<float>("roi_min_x", roi_min_x_, -10.0f);
         nh_.param<float>("roi_max_x", roi_max_x_, 30.0f);
         nh_.param<float>("roi_min_y", roi_min_y_, -6.0f);
@@ -337,7 +337,7 @@ public:
             // 너무 많이 하면 느려지고, 너무 적게 하면 잘 못찾음 100~1000 사이이
             seg.setAxis(Eigen::Vector3f(0.0, 0.0, 1.0)); 
             // Z축(위쪽)을 향하는 평면을 찾아라
-            seg.setEpsAngle(15.0f * (M_PI / 180.0f));   
+            seg.setEpsAngle(12.0f * (M_PI / 180.0f));   
             // 15도 정도 기울어진 건 봐줘라 (경사로)
 
             seg.setDistanceThreshold(zone_thresholds[i]); 
