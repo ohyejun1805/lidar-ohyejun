@@ -94,10 +94,15 @@ With Pose(위치/자세) : 그리고 내 차 기준으로 어디 위치에 서 �
 위에 딥러닝이나 클러스터링 결과로 나온 class id(물체 종류)와 score(신뢰도), 그리고 Pose(좌표)를 여기에 채워 넣습니다.
 */
 
-// [추가해야 할 헤더들]
+// 지면 제거 추가해야 할 헤더들
 #include <pcl/segmentation/sac_segmentation.h> // RANSAC 알고리즘
 #include <pcl/filters/extract_indices.h>       // 인덱스 추출 (지면/장애물 분리)
 #include <pcl/filters/passthrough.h>           // 영역 자르기 (Zone 나누기)
+
+//회전 정보 포함 시 추가할 헤더
+#include <pcl/common/pca.h>        // PCA 알고리즘
+#include <pcl/common/common.h>     // Min/Max 계산용
+#include <pcl/common/transforms.h> // 점구름 회전/이동 변환용
 
 using PointT = pcl::PointXYZI;
 // XYZ 좌표에 intensity(강도)까지 변수로 가지는 Point 사용 (intensity는 차선 식별에 도움을 주는 변수)
@@ -426,94 +431,139 @@ public:
         detection_array.header = msg->header; 
         // 헤더 안에 있는 내용물(시간, 좌표계 등)을 한 방에 복사함
 
-        //찾아낸 덩어리들 하나하나 for문으로 처리
         int cluster_id = 0;
+        // [수정됨] PCA를 적용한 반복문 시작
         for (const auto &indices : cluster_indices)
-        /*
-        extract에서 채워진 cluster_indices 벡터에서 하나씩 꺼내서
-        indices 라는 변수에 저장하면서 반복문 실행
-        */
+        //for 문을 군집화 결과(cluster_indices)를 indices에 하나씩 담고 돌린다.
         {
-            if (indices.indices.empty())//군집화된 인덱스가 비어있으면
+            if (indices.indices.empty()) { cluster_id++; continue; }
+            // 아무것도 없으면, 무시하고 다음 번호로 넘어감.
+
+            // -------------------------------------------------------------
+            // Step 1: 현재 군집의 점들을 별도의 PointCloud로 추출
+            // -------------------------------------------------------------
+            pcl::PointCloud<PointT>::Ptr cluster_cloud(new pcl::PointCloud<PointT>);
+            //현재 처리할 point cloud만 담는 cluter_cloud 만든다.
+            //ptr 스마트 포인터
+
+            for (const auto &idx : indices.indices)
+            //군집에 속한 점들 포인트들을 하나씩 꺼내서 idx에 넣음.
             {
-                cluster_id++;//다음 군집으로 넘어감
-                continue;
-            }
-
-            //어떤값이 들어와도 min또는 max가 되도록 초기값을 양극단으로 설정
-            float min_x = std::numeric_limits<float>::max();
-            float max_x = std::numeric_limits<float>::lowest();
-            float min_y = std::numeric_limits<float>::max();
-            float max_y = std::numeric_limits<float>::lowest();
-            float min_z = std::numeric_limits<float>::max();
-            float max_z = std::numeric_limits<float>::lowest();
-
-            for (const auto &idx : indices.indices)//군집화된 점들의 인덱스 하나씩 꺼내서
-            {
-                const auto &p = cloud_obstacles_total->points[idx];//cloud_crop에서 해당 인덱스의 점을 p에 저장
-                min_x = std::min(min_x, p.x);
-                max_x = std::max(max_x, p.x);
-                min_y = std::min(min_y, p.y);
-                max_y = std::max(max_y, p.y);
-                min_z = std::min(min_z, p.z);
-                max_z = std::max(max_z, p.z);//각 축별 최소값과 최대값 갱신
-
-                PointT q = p;//원본 점은 바꾸면 안되니까 복사본 q 생성
+                // ★중요: 지면이 제거된 'cloud_obstacles_total'에서 점을 가져와야 함
+                const auto &p = cloud_obstacles_total->points[idx]; 
+                cluster_cloud->points.push_back(p);
+                
+                // 시각화용 전체 클라우드에도 추가 색깔로.
+                PointT q = p;
                 q.intensity = static_cast<float>(cluster_id);
-                //intensity 값을 군집 아이디로 설정해서 색깔 다르게 만듬.
                 cloud_clustered->points.push_back(q);
-                //cloud_clustered에 q점 추가
             }
 
-            float size_x = max_x - min_x;
-            float size_y = max_y - min_y;
-            float size_z = max_z - min_z;
-            //군집의 size 계산
-            //size 계산해서 너무 작거나 크면 무시
+            // 점 개수가 너무 적으면 PCA 계산 시 에러가 날 수 있음 (최소 3~4개 필요)
+            if (cluster_cloud->size() < 4) { cluster_id++; continue; }
 
-            // =========================================================
-            // [추가됨] 객체 크기 기반 필터링 (Rule-based Filtering)
-            // =========================================================
+            // -------------------------------------------------------------
+            // Step 2: PCA (주성분 분석) 계산
+            // -------------------------------------------------------------
+            pcl::PCA<PointT> pca;
+            pca.setInputCloud(cluster_cloud);
 
-            // 1. "덜 지워진 바닥/방지턱" 제거 (높이 필터)
-            // 높이가 30cm도 안 되는 납작한 건 무시 (사람 발목 높이)
-            if (size_z < 0.3f) 
-            { 
-                cluster_id++; 
-                continue; 
-            }
+            // EigenVectors: 물체의 주축 (회전 방향)
+            // EigenValues: 분산 크기
+            // Centroid: 물체의 중심점 (x, y, z)
+            Eigen::Matrix3f eigen_vectors = pca.getEigenVectors();
+            /*
+            3x3 행렬이고,
+            getEigenVectors는 물체의 주축을 3개 뽑아냄.
+            1열은 제일 긴 방향 (ex. 자동차 앞뒤)
+            2열은 두 번째 긴 방향 (ex. 자동차 좌우)
+            3열은 제일 짧은 방향 (ex. 자동차 높이)
+            */
+            Eigen::Vector4f centroid = pca.getMean(); 
+            //getMean() : 점들의 평균, 무게 중심을 구해줌.
 
-            // 2. "벽(Wall) / 펜스" 제거 (크기 필터)
-            // 가로, 세로 길이가 10m를 넘어가면 차나 사람이 아님 -> 벽일 확률 99%
-            // (버스나 트럭을 고려해서 12m 정도로 설정)
-            if (size_x > 12.0f || size_y > 12.0f) 
-            { 
-                cluster_id++; 
-                continue; 
-            }
+            // -------------------------------------------------------------
+            // Step 3: 회전 정보 (Quaternion) 추출
+            // -------------------------------------------------------------
+            // PCA의 고유벡터(Eigenvectors)는 바로 회전 행렬(Rotation Matrix)과 같습니다.
+            // 이를 ROS 메시지 규격인 Quaternion(x, y, z, w)으로 변환합니다.
+            Eigen::Quaternionf q(eigen_vectors);
+            //3x3 행렬인 eigen_vector를 퀴터니언(x,y,z,w) 형태로 변환
+            //쿼터니언은 x,y,z 축 별로 회전 정보에 직접적인 회전값 w를 포함한 것.
 
-            if (size_y < 0.3f || size_y > 1.5f || size_z > 2.0f)
-            //너무 thin 하거나 너무 fat 하거나 너무 높으면
+            q.normalize(); 
+            // 방향 벡터 정규화 (필수)
+            // 회전 정보 크기를 1로 맞춰서 계산 오류 방지함.
+
+            // -------------------------------------------------------------
+            // Step 4: 크기 (Size) 정밀 계산 - "Rotate to Measure"
+            // -------------------------------------------------------------
+            // 그냥 min/max를 하면 AABB(뚱뚱한 박스)가 됩니다.
+            // 물체를 원점으로 가져와서, 주축에 맞춰 똑바로 세운 뒤에 크기를 재야 합니다.
+                
+            pcl::PointCloud<PointT>::Ptr transformed_cloud(new pcl::PointCloud<PointT>);
+            //똑바로 세운 점들을 담을 새 스마트 포인터 그릇 transformed_cloud 만듦
+            Eigen::Matrix4f transform_matrix = Eigen::Matrix4f::Identity();
+            //4x4 변환 행렬 생성성    
+
+            transform_matrix.block<3, 3>(0, 0) = eigen_vectors.transpose(); 
+            // (1) 회전 역행렬: 물체를 똑바로 세움
+            //물체가 오른쪽으로 30도 돌아있으면, 왼쪽으로 다시 30도 돌려주는것임.
+
+            transform_matrix.block<3, 1>(0, 3) = -1.0f * (transform_matrix.block<3,3>(0,0) * centroid.head<3>());
+            // (2) 이동 역행렬: 물체 중심을 (0,0,0)으로 가져옴
+            // 수식이 복잡함..
+
+            // 점구름 변환 실행
+            pcl::transformPointCloud(*cluster_cloud, *transformed_cloud, transform_matrix);
+            //원본 점들 (cluster_cloud)에 행렬 (transformed_matrix) 곱해서 
+            //원점에 똑바로 서 있는 transformed_cloud 를 만들어줌.
+
+            // 변환된(똑바로 선) 상태에서 최솟값, 최댓값 구하기
+            PointT min_pt, max_pt;
+            pcl::getMinMax3D(*transformed_cloud, min_pt, max_pt);
+            //getMinMax3D : 포인트 클라우드 점군을 축 별로 최대값 최솟값 뽑아내는 함수
+
+            // 진짜 길이, 너비, 높이 계산
+            float size_x = std::abs(max_pt.x - min_pt.x);
+            float size_y = std::abs(max_pt.y - min_pt.y);
+            float size_z = std::abs(max_pt.z - min_pt.z);
+            //abs는 절댓값 붙이는건데 혹시 음수 나올까봐 만약을 대비해서 하는것임.
+
+            // -------------------------------------------------------------
+            // Step 5: 필터링 및 메시지 생성
+            // -------------------------------------------------------------
+                
+            // [필터링] 너무 납작하거나(노이즈), 너무 거대한(벽) 물체 제거
+            if (size_z < 0.3f) { cluster_id++; continue; } // 높이 30cm 미만 제거
+            if (size_x > 12.0f || size_y > 12.0f) { cluster_id++; continue; } // 12m 이상 벽 제거
+
+            // 필터링을 통과한 "진짜 물체"만 Rviz에 색칠해서 보여줌
+            for (const auto &p : cluster_cloud->points)
             {
-                cluster_id++;
-                continue;//다음
+                PointT q_point = p;
+                q_point.intensity = static_cast<float>(cluster_id);
+                cloud_clustered->points.push_back(q_point);
             }
 
-            vision_msgs::Detection3D detection;//detection3D 메시지 객체 생성
-            detection.header = detection_array.header;//헤더 정보 복사
+            vision_msgs::Detection3D detection;
+            detection.header = detection_array.header;
 
-            detection.bbox.center.position.x = (min_x + max_x) * 0.5f;
-            detection.bbox.center.position.y = (min_y + max_y) * 0.5f;
-            detection.bbox.center.position.z = (min_z + max_z) * 0.5f;
-            //박스의 중심 좌표 계산
-            detection.bbox.center.orientation.w = 1.0;
-            //회전 정보 Quaternion으로 표현, 회전이 없으면 w=1.0, x=y=z=0.0
-            //근데 왜 회전 정보가 없지? 계산 속도 때문에 생략한 듯. 
-            //PCA(주성분 분석)으로 회전 정보도 구할 수 있지만 계산량이 많아짐.
+            // 위치: PCA로 구한 무게중심(Centroid) 사용
+            detection.bbox.center.position.x = centroid[0];
+            detection.bbox.center.position.y = centroid[1];
+            detection.bbox.center.position.z = centroid[2];
+
+            // 회전: PCA로 구한 Quaternion 사용
+            detection.bbox.center.orientation.x = q.x();
+            detection.bbox.center.orientation.y = q.y();
+            detection.bbox.center.orientation.z = q.z();
+            detection.bbox.center.orientation.w = q.w();
+
+            // 크기: 정밀 계산한 Size 사용
             detection.bbox.size.x = size_x;
-            detection.bbox.size.y = size_y * 1.2f;
-            detection.bbox.size.z = size_z * 1.5f;
-            //y축과 z축 크기는 살짝 여유를 줌.
+            detection.bbox.size.y = size_y;
+            detection.bbox.size.z = size_z;
 
             //물체 클래스와 신뢰도 점수 설정
             vision_msgs::ObjectHypothesisWithPose hypothesis;
