@@ -182,7 +182,7 @@ public:
         <타입>은 템플릿 타입, "파라미터 이름"은 파라미터 서버에서 찾을 이름이고,
         변수는 값을 저장할 변수, true는 기본값값
         */
-        nh_.param<float>("voxel_size", voxel_size_, 0.05f);
+        nh_.param<float>("voxel_size", voxel_size_, 0.02f);
         nh_.param<float>("roi_min_x", roi_min_x_, 0.0f);
         nh_.param<float>("roi_max_x", roi_max_x_, 10.0f);
         nh_.param<float>("roi_min_y", roi_min_y_, -4.0f);
@@ -352,7 +352,7 @@ public:
 
             // 3. [필터링] "이 크기가 아니면 콘이 아니다!"
             if (size_x > 0.7f || size_y > 0.7f) continue; // 너무 뚱뚱함 (벽/차)
-            if (size_z < 0.1f) continue;                  // 너무 납작함 (노이즈)
+            if (size_z < 0.7f) continue;                  // 너무 납작함 (노이즈)
             if (size_z > 1.1f) continue;                  // 너무 키 큼 (사람/기둥)
 
             float ratio = size_x / size_y;
@@ -362,20 +362,7 @@ public:
             ROS_WARN("Cone Found! ID: %d | Intensity: %.2f", cluster_id, avg_intensity);
             // 4. [색깔 구분] 노랑 vs 파랑
             // 방법 A: Intensity(반사율)로 구분 (일반적)
-            bool is_yellow;
-
-            if (avg_intensity>1500.0f)
-            {
-                is_yellow = true;
-            }
-            else if (avg_intensity<500.0f)
-            {
-                is_yellow = false;
-            }
-            else
-            {
-                is_yellow = (center_y > 0);
-            }
+            bool is_yellow = (avg_intensity>900.0f);
 
             // 방법 B: 위치로 구분 (트랙 특성상 왼쪽=노랑, 오른쪽=파랑일 경우)
             // 만약 Intensity가 잘 안 되면 아래 주석을 풀어서 쓰세요!
