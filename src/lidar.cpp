@@ -292,6 +292,7 @@ public:
         // 최종적으로 "장애물(바닥 아님)"만 모을 점구름 통을 만듭니다.
         pcl::PointCloud<PointT>::Ptr cloud_obstacles_total(new pcl::PointCloud<PointT>);
 
+        /*
         // 3개의 구역을 설정합니다. (단위: 미터)
         // Zone 1: roi_min_x ~ 10m (가까운 곳)
         // Zone 2: 10m ~ 25m (중간)
@@ -371,12 +372,15 @@ public:
             // [4단계] 찾은 장애물들을 최종 바구니에 쏟아 붓습니다.
             *cloud_obstacles_total += *cloud_zone_obstacle;
         }
+        */
 
         // ====================================================================
         // [중요] 이후 코드 연결을 위해 변수 이름 주의!
         // 이제부터 KdTree나 Clustering에는 'cloud_crop'이 아니라 
         // 바닥이 제거된 'cloud_obstacles_total'을 넣어야 합니다.
         // ====================================================================
+
+        *cloud_obstacles_total = *cloud_crop;
 
         if (cloud_obstacles_total->empty())
         {
