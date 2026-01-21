@@ -255,140 +255,70 @@ public:
     }
 
     void lidarCallback(const sensor_msgs::PointCloud2::ConstPtr &msg)
-    //앞에 const는 이제 데이터 보여주고 읽기만 한다음에 수정은 안된다는거 배운거지.
-    //sensor_msgs::PointCloud2는 라이다 점 포멧, 거대한 데이터 덩어리
-    //ConstPtr이 스마트 포인터, 왜 스마트 포인터냐면 new, delete 안해도 알아서 메모리 해제해줌.
-    //&도 포인터 자체도 복사 안하고 바로 접근해서 속도를 극대화 하는거 (call by reference)
     {
+        // 1. 원본 데이터 변환 (ROS -> PCL)
         pcl::PointCloud<PointT>::Ptr cloud_origin(new pcl::PointCloud<PointT>);
-        pcl::PointCloud<PointT>::Ptr cloud_down(new pcl::PointCloud<PointT>);
-        pcl::PointCloud<PointT>::Ptr cloud_crop(new pcl::PointCloud<PointT>);
-        //new니까 heap 영역에 메모리 잡음.
-        //pointT 타입 원본, 다운, 크롭 동적 객체 생성
-        //Ptr(스마트 포인터) : 포인터 쓰는 곳 없으면 알아서 delete 호출해서 메모리 해제함.(참조 카운팅(reference counting))
-        //힙 메모리에 거대한 PointCloud 객체를 하나 만듬.
-        //그리고 그 주소값을 스마트 포인터 cloud_origin로 연결함.
         pcl::fromROSMsg(*msg, *cloud_origin);
-        /*fromROSMsg는 pcl 라이브러리 전역 함수
-        입력 : *msg는 lidarCallback 함수 변수이고, ROS의 PointCloud2 메세지.
-        출력 : *cloud_origin는 PointCloud<PointT>의 객체 이는 xyz 멤버 변수가 정확히 정의된 구조체들의 벡터
-        ROS 데이터를 PCL 구조체로 변환해줌.
-        */
 
-        if (cloud_origin->empty())
-        {
-            ROS_WARN("Empty point cloud received");
-            return;
-        }//cloud_origin 데이터 비워져있으면 warning 띄움.
+        if (cloud_origin->empty()) return;
 
-        pcl::VoxelGrid<PointT> voxel_filter;//voxel_filter는 약간 데이터 줄이는 용도인듯.
-        voxel_filter.setInputCloud(cloud_origin);//cloud_origin 데이터 넣고,
-        voxel_filter.setLeafSize(voxel_size_, voxel_size_, voxel_size_);//LeafSize 설정
-        voxel_filter.filter(*cloud_down);//filter해서 cloud_down시킴.
-
-        pcl::CropBox<PointT> crop_filter;//CropBox라는 필터 객체 생성
-        crop_filter.setInputCloud(cloud_down);//voxel_filter 거친 데이터 넣음
+        // =================================================================
+        // [Step 1] 자르기 (CropBox) - 순서 변경! (Voxel보다 먼저 해야 에러 안 남)
+        // =================================================================
+        // 여기서 "바닥 제거"도 같이 해버립니다. (Z축 최소값을 바닥보다 살짝 높게 설정)
+        pcl::PointCloud<PointT>::Ptr cloud_roi(new pcl::PointCloud<PointT>);
+        pcl::CropBox<PointT> crop_filter;
+        crop_filter.setInputCloud(cloud_origin);
         crop_filter.setMin(Eigen::Vector4f(roi_min_x_, roi_min_y_, roi_min_z_, 1.0f));
         crop_filter.setMax(Eigen::Vector4f(roi_max_x_, roi_max_y_, roi_max_z_, 1.0f));
-        //관심 영역 직육면체의 최소값과 최대값 설정
-        crop_filter.filter(*cloud_crop);
-        //이 관심 영역 안에 있는 점들만 cloud_crop에 넣음.
+        crop_filter.filter(*cloud_roi);
 
-        if (cloud_crop->empty()) return;
+        if (cloud_roi->empty()) return;
 
-        //콘 주행은 거의 바닥이 평평하니까 단일 RANSAC으로 바닥 밀어버림.
+        // =================================================================
+        // [Step 2] 뭉개기 (VoxelGrid) - 이제 안전함
+        // =================================================================
+        pcl::PointCloud<PointT>::Ptr cloud_filtered(new pcl::PointCloud<PointT>);
+        pcl::VoxelGrid<PointT> voxel_filter;
+        voxel_filter.setInputCloud(cloud_roi);
+        voxel_filter.setLeafSize(voxel_size_, voxel_size_, voxel_size_); // 0.05 추천
+        voxel_filter.filter(*cloud_filtered);
 
-        pcl::PointCloud<PointT>::Ptr cloud_obstacles(new pcl::PointCloud<PointT>);
-        //콘만 담을 cloud_obstacles
-        pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
-        //수학 공식 저장할 곳
-        pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
-        //몇번 점들이 바닥인지 index 저장할 곳
-        pcl::SACSegmentation<PointT> seg;
-        //얘가 분할 해줌.
-
-        seg.setOptimizeCoefficients(true);
-        seg.setModelType(pcl::SACMODEL_PLANE); // 그냥 평면 찾기
-        seg.setMethodType(pcl::SAC_RANSAC);
-        seg.setMaxIterations(100);             // 100번 시도
-        seg.setDistanceThreshold(0.05);        // [중요] 5cm 오차범위 내는 바닥으로 간주 (엄격하게)
-
-        seg.setInputCloud(cloud_crop);
-        //crop한거 seg에 넣고고
-        seg.segment(*inliers, *coefficients);
-        //바닥 점 inliers에 담고, 지면 방정식 coefficients에 담아.
-
-        if (inliers->indices.empty()) {
-            // 바닥을 못 찾았으면, 그냥 다 장애물로 써
-            *cloud_obstacles = *cloud_crop;
-        } else {
-            // 바닥(inliers)을 제외하고 추출
-            pcl::ExtractIndices<PointT> extract;
-            extract.setInputCloud(cloud_crop);
-            extract.setIndices(inliers);
-            extract.setNegative(true); 
-            //inliers True시켜 = 바닥을 지워라
-            extract.filter(*cloud_obstacles);
-        }
-
-        // 지면 제거된 것 Publish (디버깅용)
-        sensor_msgs::PointCloud2 ground_out;
-        //ROS한테 전해줄 PointCloud2
-        pcl::toROSMsg(*cloud_obstacles, ground_out);
-        //방금 한거, ground_out에 pointcloud로 넣어
-        ground_out.header = msg->header;
-        //헤더 복사 안하면 rviz 오류류
-        cloud_ground_removed_pub_.publish(ground_out);
-        //publish
-
-        // =========================================================
-        // 5. 군집화 (Clustering)
-        // =========================================================
-        
-        if (cloud_obstacles->empty()) return;
-
+        // =================================================================
+        // [Step 3] 군집화 (Clustering) - 바로 시작
+        // =================================================================
         pcl::search::KdTree<PointT>::Ptr tree(new pcl::search::KdTree<PointT>);
-        tree->setInputCloud(cloud_obstacles);
-        //점들 빠르게 찾으려고 KdTree 씀. cloud_obstacles 한거 넣어.
+        tree->setInputCloud(cloud_filtered);
 
         std::vector<pcl::PointIndices> cluster_indices;
-        //어떤 점들이 같은 팀인지 indices vector 생성성
+        //indices 벡터 만들고고
         pcl::EuclideanClusterExtraction<PointT> clustering;
-        clustering.setInputCloud(cloud_obstacles);
-        clustering.setClusterTolerance(cluster_tolerance_);
-        //어디까지 같은 indices로 할래?
-        clustering.setMinClusterSize(min_cluster_size_);
-        clustering.setMaxClusterSize(max_cluster_size_);
+        clustering.setInputCloud(cloud_filtered);
+        clustering.setClusterTolerance(cluster_tolerance_); // 0.3 ~ 0.5 추천
+        //0.3이면 30cm 안에 있는 놈들 같은 걸로 묶어라라
+        clustering.setMinClusterSize(min_cluster_size_);    // 3 ~ 5
+        clustering.setMaxClusterSize(max_cluster_size_);    // 300
         clustering.setSearchMethod(tree);
         clustering.extract(cluster_indices);
 
-        // 결과 담을 메시지 준비
-        vision_msgs::Detection3DArray detection_array;
-        detection_array.header = msg->header;
-
-        // [추가] 마커 어레이 준비
+        // 마커(시각화) 준비
         visualization_msgs::MarkerArray marker_array;
-
-        // 시각화용 점구름
-        pcl::PointCloud<PointT>::Ptr cloud_clustered(new pcl::PointCloud<PointT>);
-        //이제 indices별로 색칠한 점들을 담을 새 pointcloud
-        cloud_clustered->header = cloud_obstacles->header;
-        cloud_clustered->is_dense = false;
+        
+        // 콘들만 모아둘 점구름 (확인용)
+        pcl::PointCloud<PointT>::Ptr cloud_cones(new pcl::PointCloud<PointT>);
+        cloud_cones->header = cloud_origin->header;
+        cloud_cones->is_dense = false;
 
         int cluster_id = 0;
 
         for (const auto &indices : cluster_indices)
         {
-            // --- 클러스터 내부 점 추출 ---
+            // 1. 클러스터 하나 꺼내기
             pcl::PointCloud<PointT>::Ptr cluster_cloud(new pcl::PointCloud<PointT>);
             for (const auto &idx : indices.indices)
-                cluster_cloud->points.push_back(cloud_obstacles->points[idx]);
+                cluster_cloud->points.push_back(cloud_filtered->points[idx]);
 
-            // =========================================================
-            // [수정] PCA 삭제 -> Min-Max (AABB) 방식 적용
-            // 이유: 콘은 둥글어서 회전이 필요 없고, 이게 훨씬 빠르고 떨림이 없음
-            // =========================================================
-
+            // 2. 위치 및 크기 계산 (Min-Max 방식 - 제일 빠름)
             float min_x = std::numeric_limits<float>::max();
             float max_x = std::numeric_limits<float>::lowest();
             float min_y = std::numeric_limits<float>::max();
@@ -396,178 +326,109 @@ public:
             float min_z = std::numeric_limits<float>::max();
             float max_z = std::numeric_limits<float>::lowest();
 
-            // 1. 점들을 돌면서 가장 끝점(최소/최대) 찾기
+            float avg_intensity = 0.0f; // 강도 평균 계산용
+
             for (const auto &p : cluster_cloud->points)
             {
-                if (p.x < min_x) min_x = p.x;
+                if (p.x < min_x) min_x = p.x; 
                 if (p.x > max_x) max_x = p.x;
-                if (p.y < min_y) min_y = p.y;
+                if (p.y < min_y) min_y = p.y; 
                 if (p.y > max_y) max_y = p.y;
-                if (p.z < min_z) min_z = p.z;
+                if (p.z < min_z) min_z = p.z; 
                 if (p.z > max_z) max_z = p.z;
+                avg_intensity += p.intensity;
             }
+            if (cluster_cloud->size() > 0) avg_intensity /= cluster_cloud->size();
 
-            // 2. 크기 계산 (최대 - 최소)
+            // 중심점
+            float center_x = (min_x + max_x) / 2.0f;
+            float center_y = (min_y + max_y) / 2.0f;
+            float center_z = (min_z + max_z) / 2.0f;
+
+            // 크기
             float size_x = max_x - min_x;
             float size_y = max_y - min_y;
             float size_z = max_z - min_z;
 
-            // 3. 중심점(Centroid) 계산 (중간값)
-            Eigen::Vector4f centroid;
-            centroid[0] = (min_x + max_x) / 2.0f;
-            centroid[1] = (min_y + max_y) / 2.0f;
-            centroid[2] = (min_z + max_z) / 2.0f;
-            centroid[3] = 1.0f;
+            // 3. [필터링] "이 크기가 아니면 콘이 아니다!"
+            if (size_x > 0.8f || size_y > 0.8f) continue; // 너무 뚱뚱함 (벽/차)
+            if (size_z < 0.1f) continue;                  // 너무 납작함 (노이즈)
+            if (size_z > 1.2f) continue;                  // 너무 키 큼 (사람/기둥)
 
-            // 4. 회전은 "0" (콘은 그냥 똑바로 서 있음)
-            Eigen::Quaternionf q(1.0f, 0.0f, 0.0f, 0.0f); // w=1, x=0, y=0, z=0 (Identity)
-
-            // =========================================================
-            // [기존 유지] 콘 필터링 (Size Check)
-            // =========================================================
-            // 1. 너무 큰 것 제거 (벽, 큰 차) - 콘은 보통 50cm 미만
-            if (size_x > 0.8f || size_y > 0.8f) { cluster_id++; continue; }
-            // 2. 너무 낮은 것 제거 (바닥 노이즈, 납작한 물체)
-            if (size_z < 0.1f) { cluster_id++; continue; }
-            // 3. 너무 높은 것 제거 (사람, 기둥) - 콘은 보통 70cm
-            if (size_z > 1.2f) { cluster_id++; continue; }
-
-            // =========================================================
-            // Intensity 분석 및 색상 분류
-            // =========================================================
-            float avg_intensity = 0.0f;
-            for(const auto& p : cluster_cloud->points) avg_intensity += p.intensity;
-            if (cluster_cloud->size() > 0) avg_intensity /= cluster_cloud->size();
-
-            // [튜닝 포인트] 이 값(40.0)을 기준으로 색깔을 나눕니다.
+            // 4. [색깔 구분] 노랑 vs 파랑
+            // 방법 A: Intensity(반사율)로 구분 (일반적)
             bool is_yellow = (avg_intensity > 40.0f); 
 
-            // --- Visualization Msg (Box) 생성 ---
-            vision_msgs::Detection3D detection;
-            detection.header = msg->header;
-            detection.bbox.center.position.x = centroid[0];
-            detection.bbox.center.position.y = centroid[1];
-            detection.bbox.center.position.z = centroid[2];
-            
-            // 회전은 고정 (Identity)
-            detection.bbox.center.orientation.x = 0.0;
-            detection.bbox.center.orientation.y = 0.0;
-            detection.bbox.center.orientation.z = 0.0;
-            detection.bbox.center.orientation.w = 1.0;
+            // 방법 B: 위치로 구분 (트랙 특성상 왼쪽=노랑, 오른쪽=파랑일 경우)
+            // 만약 Intensity가 잘 안 되면 아래 주석을 풀어서 쓰세요!
+            // bool is_yellow = (center_y > 0); // y가 양수(왼쪽)면 노랑
 
-            detection.bbox.size.x = size_x;
-            detection.bbox.size.y = size_y;
-            detection.bbox.size.z = size_z;
-            
-            vision_msgs::ObjectHypothesisWithPose hypothesis;
-            hypothesis.id = is_yellow ? 1 : 0; // 1: Yellow, 0: Blue
-            hypothesis.score = 1.0;
-            detection.results.push_back(hypothesis);
-            detection_array.detections.push_back(detection);
-
-            // =========================================================
-            // [기존 유지] Marker 생성 (원통 모양)
-            // =========================================================
+            // 5. 마커(원통) 만들기
             visualization_msgs::Marker marker;
             marker.header = msg->header;
             marker.ns = "cones";
-            marker.id = cluster_id;
-            marker.type = visualization_msgs::Marker::CYLINDER; // 원통
+            marker.id = cluster_id; // ID가 0, 1, 2... 순서대로 붙어야 깜빡임이 없음
+            marker.type = visualization_msgs::Marker::CYLINDER;
             marker.action = visualization_msgs::Marker::ADD;
             
-            marker.pose = detection.bbox.center; // 위치는 박스와 동일
-            marker.pose.orientation.w = 1.0;     // 회전 없음
+            marker.pose.position.x = center_x;
+            marker.pose.position.y = center_y;
+            marker.pose.position.z = center_z;
+            marker.pose.orientation.w = 1.0; // 회전 없음
 
-            // 크기 (콘 실제 크기랑 비슷하게 시각화)
-            marker.scale.x = 0.3; // 지름
+            marker.scale.x = 0.3; // 콘 지름 (고정)
             marker.scale.y = 0.3; 
-            marker.scale.z = size_z; // 높이는 실제 측정 높이 반영
+            marker.scale.z = size_z; // 높이는 실제 측정값
 
-            // 색상 (Intensity 기반)
-            marker.color.a = 0.8; // 투명도
+            marker.color.a = 0.9; // 투명도 (1.0이면 불투명)
             if (is_yellow) 
             {
                 marker.color.r = 1.0f; 
                 marker.color.g = 1.0f; 
                 marker.color.b = 0.0f; // 노랑
-            } 
-            else 
+            } else 
             {
                 marker.color.r = 0.0f; 
                 marker.color.g = 0.0f; 
                 marker.color.b = 1.0f; // 파랑
             }
-            marker.lifetime = ros::Duration(0.1); // 잔상 제거
+            
+            marker.lifetime = ros::Duration(0.1); // 0.1초 뒤 사라짐 (잔상 제거용)
             marker_array.markers.push_back(marker);
 
-            // 시각화용 포인트 채우기
-            for (const auto &p : cluster_cloud->points) {
-                PointT p_colored = p;
-                p_colored.intensity = cluster_id; // 색깔 구분용
-                cloud_clustered->points.push_back(p_colored);
+            // 시각화용 점구름 채우기 (선택사항)
+            for (auto &p : cluster_cloud->points) 
+            {
+                p.intensity = is_yellow ? 100 : 20; // 색깔 구분을 위해 강도 강제 변경
+                cloud_cones->points.push_back(p);
             }
+
             cluster_id++;
         }
 
-        if (publish_origin_)//만약 원본 데이터를 publish 하기로 설정되어 있으면
-        {
-            sensor_msgs::PointCloud2 out;//빈 ROS 메시지 객체 생성
-            pcl::toROSMsg(*cloud_origin, out);//PCL PointCloud를 ROS PointCloud2 메시지로 변환
-            out.header.stamp = msg->header.stamp;
-            out.header.frame_id = msg->header.frame_id;//헤더 정보 복사
-            cloud_origin_pub_.publish(out);//원본 점구름 데이터 publish
-        }
+        // =================================================================
+        // Publish (필요한 것만!)
+        // =================================================================
+        
+        // 1. 마커 (제일 중요: 파랑/노랑 원통)
+        marker_pub_.publish(marker_array);
 
-        if (publish_down_)//만약 다운샘플된 데이터를 publish 하기로 설정되어 있으면
-        {
+        // 2. 최종 점구름 (확인용)
+        if (publish_clustered_) {
             sensor_msgs::PointCloud2 out;
-            pcl::toROSMsg(*cloud_down, out);
-            out.header.stamp = msg->header.stamp;
-            out.header.frame_id = msg->header.frame_id;
-            cloud_down_pub_.publish(out);//똑같은 방식으로 publish
-        }
-
-        if (publish_crop_)//만약 크롭된 데이터를 publish 하기로 설정되어 있으면
-        {
-            sensor_msgs::PointCloud2 out;
-            pcl::toROSMsg(*cloud_crop, out);
-            out.header.stamp = msg->header.stamp;
-            out.header.frame_id = msg->header.frame_id;
-            cloud_crop_pub_.publish(out);//똑같은 방식으로 publish
-        }
-
-        // [추가됨] ★지면 제거된 데이터 Publish★ (이걸 봐야 RANSAC 튜닝 가능!)
-        // 이건 파라미터(bool) 확인 안 하고 그냥 무조건 보내서 확인합시다.
-        if (true) 
-        {
-            sensor_msgs::PointCloud2 out;
-            pcl::toROSMsg(*cloud_obstacles_total, out); // 바닥 제거된 데이터
+            pcl::toROSMsg(*cloud_cones, out);
             out.header = msg->header;
-            cloud_ground_removed_pub_.publish(out);
+            cloud_cluster_pub_.publish(out);
         }
 
-        if (publish_clustered_)//만약 군집화된 데이터를 publish 하기로 설정되어 있으면
-        {
+        // 3. ROI 확인용 (잘렸는지 보고 싶으면)
+        if (publish_crop_) {
             sensor_msgs::PointCloud2 out;
-            pcl::toROSMsg(*cloud_clustered, out);
-            out.header.stamp = msg->header.stamp;
-            out.header.frame_id = msg->header.frame_id;
-            cloud_cluster_pub_.publish(out);//똑같은 방식으로 publish
+            pcl::toROSMsg(*cloud_filtered, out); // Voxel까지 된 거 보냄
+            out.header = msg->header;
+            cloud_crop_pub_.publish(out);
         }
-
-        bbox_pub_.publish(detection_array);
-        //detection_array 메시지를 /gigacha/lidar/bounding_boxes 토픽으로 publish
-
-        //디버그 로그 출력
-        ROS_DEBUG("origin=%zu down=%zu crop=%zu clusters=%zu det=%zu",
-                  cloud_origin->size(),
-                  cloud_down->size(),
-                  cloud_crop->size(),
-                  cluster_indices.size(),
-                  detection_array.detections.size());
-                  //내 데이터가 몇개인지 출력
-                  //어디가 병목인지 파악하는데 도움됨.
-    }//lidarCallback 함수 끝
+    }
 };
 
 int main(int argc, char **argv)//argc는 인자 개수, argv는 인자 값들(문자열 배열 포인터)
