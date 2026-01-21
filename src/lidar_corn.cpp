@@ -362,7 +362,20 @@ public:
             ROS_WARN("Cone Found! ID: %d | Intensity: %.2f", cluster_id, avg_intensity);
             // 4. [색깔 구분] 노랑 vs 파랑
             // 방법 A: Intensity(반사율)로 구분 (일반적)
-            bool is_yellow = (avg_intensity > 200.0f); 
+            bool is_yellow;
+
+            if (avg_intensity>1500.0f)
+            {
+                is_yellow = true;
+            }
+            else if (avg_intensity<500.0f)
+            {
+                is_yellow = false;
+            }
+            else
+            {
+                is_yellow = (center_y > 0);
+            }
 
             // 방법 B: 위치로 구분 (트랙 특성상 왼쪽=노랑, 오른쪽=파랑일 경우)
             // 만약 Intensity가 잘 안 되면 아래 주석을 풀어서 쓰세요!
@@ -383,7 +396,7 @@ public:
 
             marker.scale.x = 0.3; // 콘 지름 (고정)
             marker.scale.y = 0.3; 
-            marker.scale.z = 1.0; // 높이는 실제 측정값
+            marker.scale.z = 0.5f; // 높이는 실제 측정값
 
             marker.color.a = 0.9; // 투명도 (1.0이면 불투명)
             if (is_yellow) 
@@ -398,7 +411,7 @@ public:
                 marker.color.b = 1.0f; // 파랑
             }
             
-            marker.lifetime = ros::Duration(0.1); // 0.1초 뒤 사라짐 (잔상 제거용)
+            marker.lifetime = ros::Duration(0.5); // 0.1초 뒤 사라짐 (잔상 제거용)
             marker_array.markers.push_back(marker);
 
             // 시각화용 점구름 채우기 (선택사항)
