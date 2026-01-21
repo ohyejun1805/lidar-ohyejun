@@ -351,13 +351,18 @@ public:
             float size_z = max_z - min_z;
 
             // 3. [필터링] "이 크기가 아니면 콘이 아니다!"
-            if (size_x > 0.8f || size_y > 0.8f) continue; // 너무 뚱뚱함 (벽/차)
+            if (size_x > 0.7f || size_y > 0.7f) continue; // 너무 뚱뚱함 (벽/차)
             if (size_z < 0.1f) continue;                  // 너무 납작함 (노이즈)
-            if (size_z > 1.2f) continue;                  // 너무 키 큼 (사람/기둥)
+            if (size_z > 1.1f) continue;                  // 너무 키 큼 (사람/기둥)
 
+            float ratio = size_x / size_y;
+            // 비율이 0.5 ~ 2.0 사이가 아니면 (즉, 너무 길쭉하면) 버림
+            if (ratio < 0.5f || ratio > 2.0f) { cluster_id++; continue; }
+
+            ROS_WARN("Cone Found! ID: %d | Intensity: %.2f", cluster_id, avg_intensity);
             // 4. [색깔 구분] 노랑 vs 파랑
             // 방법 A: Intensity(반사율)로 구분 (일반적)
-            bool is_yellow = (avg_intensity > 40.0f); 
+            bool is_yellow = (avg_intensity > 200.0f); 
 
             // 방법 B: 위치로 구분 (트랙 특성상 왼쪽=노랑, 오른쪽=파랑일 경우)
             // 만약 Intensity가 잘 안 되면 아래 주석을 풀어서 쓰세요!
@@ -378,7 +383,7 @@ public:
 
             marker.scale.x = 0.3; // 콘 지름 (고정)
             marker.scale.y = 0.3; 
-            marker.scale.z = size_z; // 높이는 실제 측정값
+            marker.scale.z = 1.0; // 높이는 실제 측정값
 
             marker.color.a = 0.9; // 투명도 (1.0이면 불투명)
             if (is_yellow) 
