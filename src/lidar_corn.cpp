@@ -444,9 +444,9 @@ public:
             marker.type = visualization_msgs::Marker::CYLINDER;
             marker.action = visualization_msgs::Marker::ADD;
             
-            marker.pose.position.x = center_x;
-            marker.pose.position.y = center_y;
-            marker.pose.position.z = center_z;
+            marker.pose.position.x = cone_x;
+            marker.pose.position.y = cone_y;
+            marker.pose.position.z = cone_z;
             marker.pose.orientation.w = 1.0; // 회전 없음
 
             marker.scale.x = 0.3; // 콘 지름 (고정)
