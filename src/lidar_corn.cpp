@@ -156,7 +156,8 @@ private:
     //색깔 콘 마커 퍼블리셔
 
     //트래킹용 구조체
-    struct Trackcone{
+    struct Trackcone
+    {
         int id;
         float x,y,z;
         float smooth_intensity;
@@ -312,13 +313,21 @@ public:
         clustering.extract(cluster_indices);
 
         std::vector<Trackcone> current_scan_cones;
+        int cluster_id = 0;
+
+        pcl::PointCloud<PointT>::Ptr cloud_cones(new pcl::PointCloud<PointT>);
+        cloud_cones->header = cloud_origin->header;
         
         for (const auto &indices : cluster_indices)
         {
             // 1. 클러스터 하나 꺼내기
             pcl::PointCloud<PointT>::Ptr cluster_cloud(new pcl::PointCloud<PointT>);
             for (const auto &idx : indices.indices)
+            {
                 cluster_cloud->points.push_back(cloud_filtered->points[idx]);
+                cloud_cones->points.push_back(cloud_filtered->points[idx]);
+                //점그룸 모으기기
+            }
 
             // 2. 위치 및 크기 계산 (Min-Max 방식 - 제일 빠름)
             float min_x = std::numeric_limits<float>::max();
@@ -374,7 +383,7 @@ public:
         for (auto &curr : current_scan_cones)
         {
             int match_idx = -1;
-            float min_mist = 1.0f; // 1.0 이내면 같은 콘으로 인식
+            float min_dist = 1.0f; // 1.0 이내면 같은 콘으로 인식
 
             for(size_t i=0; i<map_cones_.size(); i++)
             {
@@ -476,7 +485,7 @@ public:
             text.color.r = 1.0; text.color.g = 1.0; text.color.b = 1.0; text.color.a = 1.0;
             
             // ID와 밝기를 같이 띄워줌 (예: "ID:3 (1200)")
-            text.text = "ID:" + std::to_string(cone.id) + "\n(" + std::to_string((int)cone.smoothed_intensity) + ")";
+            text.text = "ID:" + std::to_string(cone.id) + "\n(" + std::to_string((int)cone.smooth_intensity) + ")";
             text.lifetime = ros::Duration(0.2);
             marker_array.markers.push_back(text);
         }
