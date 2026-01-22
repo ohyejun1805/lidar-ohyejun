@@ -155,6 +155,16 @@ private:
     ros::Publisher marker_pub_;
     //색깔 콘 마커 퍼블리셔
 
+    //트래킹용 구조체
+    struct Trackcone{
+        int id;
+        float x,y,z;
+        float smooth_intensity;
+        int life;
+    };
+    std::vector<Trackcone> map_cones_;
+    int global_id_counter_ = 0;
+
     float voxel_size_;//3D 픽셀 크기 변수
     float roi_min_x_, roi_max_x_;
     float roi_min_y_, roi_max_y_;
@@ -301,16 +311,8 @@ public:
         clustering.setSearchMethod(tree);
         clustering.extract(cluster_indices);
 
-        // 마커(시각화) 준비
-        visualization_msgs::MarkerArray marker_array;
+        std::vector<Trackcone> current_scan_cones;
         
-        // 콘들만 모아둘 점구름 (확인용)
-        pcl::PointCloud<PointT>::Ptr cloud_cones(new pcl::PointCloud<PointT>);
-        cloud_cones->header = cloud_origin->header;
-        cloud_cones->is_dense = false;
-
-        int cluster_id = 0;
-
         for (const auto &indices : cluster_indices)
         {
             // 1. 클러스터 하나 꺼내기
@@ -352,18 +354,75 @@ public:
 
             // 3. [필터링] "이 크기가 아니면 콘이 아니다!"
             if (size_x > 0.7f || size_y > 0.7f) continue; // 너무 뚱뚱함 (벽/차)
-            if (size_z < 0.7f) continue;                  // 너무 납작함 (노이즈)
+            if (size_z < 0.1f) continue;                  // 너무 납작함 (노이즈)
             if (size_z > 1.1f) continue;                  // 너무 키 큼 (사람/기둥)
 
             float ratio = size_x / size_y;
             // 비율이 0.5 ~ 2.0 사이가 아니면 (즉, 너무 길쭉하면) 버림
             if (ratio < 0.5f || ratio > 2.0f) { cluster_id++; continue; }
 
-            ROS_WARN("Cone Found! ID: %d | Intensity: %.2f", cluster_id, avg_intensity);
-            // 4. [색깔 구분] 노랑 vs 파랑
-            // 방법 A: Intensity(반사율)로 구분 (일반적)
-            bool is_yellow = (avg_intensity>900.0f);
+            //Trackcone 저장.
+            Trackcone temp;
+            temp.x = center_x;
+            temp.y = center_y;
+            temp.z = center_z;
+            temp.smooth_intensity = avg_intensity;
+            temp.id = -1;
+            current_scan_cones.push_back(temp);
+        }
 
+        for (auto &curr : current_scan_cones)
+        {
+            int match_idx = -1;
+            float min_mist = 1.0f; // 1.0 이내면 같은 콘으로 인식
+
+            for(size_t i=0; i<map_cones_.size(); i++)
+            {
+                float dx = curr.x - map_cones_[i].x;
+                float dy = curr.y - map_cones_[i].y;
+                float dist = std::sqrt(dx*dx + dy*dy);
+
+                if (dist < min_dist)
+                {
+                    min_dist = dist;
+                    match_idx = i;
+                }
+            }
+
+            //콘 매칭하면.
+            if(match_idx != -1)
+            {
+                curr.id = map_cones_[match_idx].id;
+                
+                //기존 강도에 새로운 강도를 수정해가면서 저장
+                float old_intensity = map_cones_[match_idx].smooth_intensity;
+                float new_intensity = curr.smooth_intensity;
+                curr.smooth_intensity = (old_intensity * 0.8f) + (new_intensity * 0.2f);
+
+                map_cones_[match_idx] = curr;
+                map_cones_[match_idx].life = 10;
+            }
+            
+            else 
+            {
+                curr.id = global_id_counter_++;
+                curr.life = 10;
+                map_cones_.push_back(curr);
+            }
+        }
+        
+        for (auto it = map_cones_.begin(); it != map_cones_.end();)
+        {
+            it -> life --;
+            if ( it->life <= 0 ) it = map_cones_.erase(it);
+            else ++it;
+        }
+
+        // 마커(시각화) 준비
+        visualization_msgs::MarkerArray marker_array;
+        
+        for (const auto &cone : map_cones_)
+        {
             // 방법 B: 위치로 구분 (트랙 특성상 왼쪽=노랑, 오른쪽=파랑일 경우)
             // 만약 Intensity가 잘 안 되면 아래 주석을 풀어서 쓰세요!
             // bool is_yellow = (center_y > 0); // y가 양수(왼쪽)면 노랑
@@ -372,7 +431,7 @@ public:
             visualization_msgs::Marker marker;
             marker.header = msg->header;
             marker.ns = "cones";
-            marker.id = cluster_id; // ID가 0, 1, 2... 순서대로 붙어야 깜빡임이 없음
+            marker.id = cone.id; // ID가 0, 1, 2... 순서대로 붙어야 깜빡임이 없음
             marker.type = visualization_msgs::Marker::CYLINDER;
             marker.action = visualization_msgs::Marker::ADD;
             
@@ -385,32 +444,42 @@ public:
             marker.scale.y = 0.3; 
             marker.scale.z = 0.5f; // 높이는 실제 측정값
 
-            marker.color.a = 0.9; // 투명도 (1.0이면 불투명)
+            bool is_yellow = (cone.smooth_intensity > 900.0f);
+
+            marker.color.a = 0.9;
             if (is_yellow) 
             {
                 marker.color.r = 1.0f; 
                 marker.color.g = 1.0f; 
-                marker.color.b = 0.0f; // 노랑
-            } else 
+                marker.color.b = 0.0f; 
+            } 
+            else 
             {
                 marker.color.r = 0.0f; 
-                marker.color.g = 0.0f; 
-                marker.color.b = 1.0f; // 파랑
+                marker.color.g = 0.0f;
+                marker.color.b = 1.0f; 
             }
-            
-            marker.lifetime = ros::Duration(0.5); // 0.1초 뒤 사라짐 (잔상 제거용)
+            marker.lifetime = ros::Duration(0.2);
             marker_array.markers.push_back(marker);
 
-            // 시각화용 점구름 채우기 (선택사항)
-            for (auto &p : cluster_cloud->points) 
-            {
-                p.intensity = is_yellow ? 100 : 20; // 색깔 구분을 위해 강도 강제 변경
-                cloud_cones->points.push_back(p);
-            }
-
-            cluster_id++;
+            // 숫자 텍스트 (누적 평균값 확인용)
+            visualization_msgs::Marker text;
+            text.header = msg->header;
+            text.ns = "ids";
+            text.id = cone.id;
+            text.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+            text.action = visualization_msgs::Marker::ADD;
+            text.pose.position.x = cone.x;
+            text.pose.position.y = cone.y;
+            text.pose.position.z = cone.z + 0.4f;
+            text.scale.z = 0.3; 
+            text.color.r = 1.0; text.color.g = 1.0; text.color.b = 1.0; text.color.a = 1.0;
+            
+            // ID와 밝기를 같이 띄워줌 (예: "ID:3 (1200)")
+            text.text = "ID:" + std::to_string(cone.id) + "\n(" + std::to_string((int)cone.smoothed_intensity) + ")";
+            text.lifetime = ros::Duration(0.2);
+            marker_array.markers.push_back(text);
         }
-
         // =================================================================
         // Publish (필요한 것만!)
         // =================================================================
