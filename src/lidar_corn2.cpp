@@ -160,7 +160,7 @@ private:
     {
         int id;
         float x,y,z;
-        float smooth_intensity;
+        float raw_intensity;
         int life;
     };
     std::vector<Trackcone> map_cones_;
@@ -406,9 +406,6 @@ public:
                 curr.id = map_cones_[match_idx].id;
                 
                 //기존 강도에 새로운 강도를 수정해가면서 저장
-                float old_intensity = map_cones_[match_idx].smooth_intensity;
-                float new_intensity = curr.smooth_intensity;
-                curr.smooth_intensity = (old_intensity * 0.8f) + (new_intensity * 0.2f);
 
                 map_cones_[match_idx] = curr;
                 map_cones_[match_idx].life = 10;
@@ -467,7 +464,7 @@ public:
                 threshold = 1300.0f;
             }
 
-            bool is_yellow = (cone.smooth_intensity > threshold);
+            bool is_yellow = (cone.raw_intensity > threshold);
 
             marker.color.a = 0.9;
             if (is_yellow) 
@@ -499,7 +496,7 @@ public:
             text.color.r = 1.0; text.color.g = 1.0; text.color.b = 1.0; text.color.a = 1.0;
             
             // ID와 밝기를 같이 띄워줌 (예: "ID:3 (1200)")
-            text.text = "ID:" + std::to_string(cone.id) + "\n(" + std::to_string((int)cone.smooth_intensity) + ")";
+            text.text = "ID:" + std::to_string(cone.id) + "\n(" + std::to_string((int)cone.raw_intensity) + ")";
             text.lifetime = ros::Duration(0.2);
             marker_array.markers.push_back(text);
         }
