@@ -160,7 +160,7 @@ private:
     {
         int id;
         float x,y,z;
-        float smooth_intensity;
+        float raw_intensity;
         int life;
     };
     std::vector<Trackcone> map_cones_;
@@ -198,10 +198,10 @@ public:
         nh_.param<float>("roi_max_x", roi_max_x_, 10.0f);
         nh_.param<float>("roi_min_y", roi_min_y_, -4.0f);
         nh_.param<float>("roi_max_y", roi_max_y_, 4.0f);
-        nh_.param<float>("roi_min_z", roi_min_z_, -0.8f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
+        nh_.param<float>("roi_min_z", roi_min_z_, -0.9f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
         nh_.param<float>("roi_max_z", roi_max_z_, 0.7f);
         nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.3f);
-        nh_.param<int>("min_cluster_size", min_cluster_size_, 3);
+        nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 300);
         //ROS 파라미터에서 값을 읽고, 없으면 기본값을 넣는다.
 
@@ -322,6 +322,7 @@ public:
         {
             // 1. 클러스터 하나 꺼내기
             pcl::PointCloud<PointT>::Ptr cluster_cloud(new pcl::PointCloud<PointT>);
+            
             for (const auto &idx : indices.indices)
             {
                 cluster_cloud->points.push_back(cloud_filtered->points[idx]);
@@ -337,7 +338,12 @@ public:
             float min_z = std::numeric_limits<float>::max();
             float max_z = std::numeric_limits<float>::lowest();
 
-            float avg_intensity = 0.0f; // 강도 평균 계산용
+            float cone_height = max_z - min_z;
+            float plastic_limit_z = min_z + (cone_height * 0.3f);
+
+            float plastic_intenstiy_sum = 0.0f;
+            int plastic_point_count = 0;
+            float total_intensity_sum = 0.0f;
 
             for (const auto &p : cluster_cloud->points)
             {
@@ -345,12 +351,29 @@ public:
                 if (p.x > max_x) max_x = p.x;
                 if (p.y < min_y) min_y = p.y; 
                 if (p.y > max_y) max_y = p.y;
-                if (p.z < min_z) min_z = p.z; 
-                if (p.z > max_z) max_z = p.z;
-                avg_intensity += p.intensity;
-            }
-            if (cluster_cloud->size() > 0) avg_intensity /= cluster_cloud->size();
 
+                total_intensity_sum += p.intensity;
+
+                if (p.z <= plastic_limit_z)
+                {
+                    plastic_intenstiy_sum += p.intensity;
+                    plastic_point_count++;
+                }
+
+            }
+            
+            float final_intensity = 0.0f;
+            if (plastic_point_count > 0)
+            {
+                final_intensity = plastic_intenstiy_sum / plastic_point_count;
+            }
+            else
+            {
+                if (cluster_cloud->size() > 0)
+                {
+                    final_intensity = total_intensity_sum / cluster_cloud->size();
+                }
+            }
             // 중심점
             float center_x = (min_x + max_x) / 2.0f;
             float center_y = (min_y + max_y) / 2.0f;
@@ -377,9 +400,11 @@ public:
             temp.x = center_x;
             temp.y = center_y;
             temp.z = center_z;
-            temp.smooth_intensity = avg_intensity;
+            temp.raw_intensity = final_intensity;
             temp.id = -1;
             current_scan_cones.push_back(temp);
+
+            cluster_id++;
         }
 
         for (auto &curr : current_scan_cones)
@@ -455,21 +480,11 @@ public:
             marker.scale.y = 0.3; 
             marker.scale.z = 0.5f; // 높이는 실제 측정값
 
-            float dist = std::sqrt(cone.x*cone.x + cone.y*cone.y);
-            float threshold = 900.0f;
+            float threshold = 300.0f;
 
-            if(dist<3.0f)
-            {
-                threshold = 2000.0f;
-            }
-            else if (dist<6.0f)
-            {
-                threshold = 1300.0f;
-            }
+            bool is_yellow = (cone.raw_intensity > threshold)
 
-            bool is_yellow = (cone.smooth_intensity > threshold);
-
-            marker.color.a = 0.9;
+            marker.color.a = 0.8;
             if (is_yellow) 
             {
                 marker.color.r = 1.0f; 
@@ -498,8 +513,7 @@ public:
             text.scale.z = 0.3; 
             text.color.r = 1.0; text.color.g = 1.0; text.color.b = 1.0; text.color.a = 1.0;
             
-            // ID와 밝기를 같이 띄워줌 (예: "ID:3 (1200)")
-            text.text = "ID:" + std::to_string(cone.id) + "\n(" + std::to_string((int)cone.smooth_intensity) + ")";
+            text.text = "intensity: " + std::to_string((int)cone.raw_intensity);
             text.lifetime = ros::Duration(0.2);
             marker_array.markers.push_back(text);
         }
