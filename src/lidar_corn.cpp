@@ -431,9 +431,9 @@ public:
                 curr.id = map_cones_[match_idx].id;
                 
                 //기존 강도에 새로운 강도를 수정해가면서 저장
-                float old_intensity = map_cones_[match_idx].smooth_intensity;
-                float new_intensity = curr.smooth_intensity;
-                curr.smooth_intensity = (old_intensity * 0.8f) + (new_intensity * 0.2f);
+                float old_intensity = map_cones_[match_idx].raw_intensity;
+                float new_intensity = curr.raw_intensity;
+                curr.raw_intensity = (old_intensity * 0.8f) + (new_intensity * 0.2f);
 
                 map_cones_[match_idx] = curr;
                 map_cones_[match_idx].life = 10;
@@ -482,7 +482,7 @@ public:
 
             float threshold = 300.0f;
 
-            bool is_yellow = (cone.raw_intensity > threshold)
+            bool is_yellow = (cone.raw_intensity > threshold);
 
             marker.color.a = 0.8;
             if (is_yellow) 
