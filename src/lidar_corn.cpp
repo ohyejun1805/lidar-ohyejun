@@ -376,7 +376,14 @@ public:
 
             float center_x = (min_x + max_x) / 2.0f;
             float center_y = (min_y + max_y) / 2.0f;
+
+            float size_x = max_x - min_x; 
+            float size_y = max_y - min_y;
             float size_z = cone_height;
+
+            if (size_x > 0.7f || size_y > 0.7f) continue; // 너무 뚱뚱한 건 벽/차 (삭제)
+            if (size_z < 0.1f) continue; // 5cm 미만은 바닥 노이즈 (삭제) - 이 정도면 안전함
+            if (size_z > 1.1f) continue;  // 너무 큰 기둥 (삭제)
 
             // [디버깅 로그] 이제 SizeZ가 정상적인 값(0.5 등)으로 찍힐 겁니다.
             ROS_INFO("Box Created! ID:%d SizeZ:%.2f Pts:%d", cluster_id, size_z, plastic_point_count);
@@ -417,19 +424,27 @@ public:
             {
                 curr.id = map_cones_[match_idx].id;
                 
-                //기존 강도에 새로운 강도를 수정해가면서 저장
-                float old_intensity = map_cones_[match_idx].raw_intensity;
-                float new_intensity = curr.raw_intensity;
-                curr.raw_intensity = (old_intensity * 0.8f) + (new_intensity * 0.2f);
+                float dist_from_car = std::sqrt(curr.x*curr.x + curr.y*curr.y);
 
+                if (dist_from_car > 2.0f)
+                {
+                    float old_intensity = map_cones_[match_idx].raw_intensity;
+                    float new_intensity = curr.raw_intensity;
+                    curr.raw_intensity = (old_intensity * 0.7f) + (new_intensity*0.3f);
+                }
+
+                else
+                {
+                    curr.raw_intensity = map_cones_[match_idx].raw_intensity;
+                }
                 map_cones_[match_idx] = curr;
-                map_cones_[match_idx].life = 10;
+                map_cones_[match_idx].life = 20;
             }
             
             else 
             {
                 curr.id = global_id_counter_++;
-                curr.life = 10;
+                curr.life = 20;
                 map_cones_.push_back(curr);
             }
         }
@@ -460,12 +475,12 @@ public:
             
             marker.pose.position.x = cone.x;
             marker.pose.position.y = cone.y;
-            marker.pose.position.z = cone.z + (marker.scale.z / 2.0f);
+            marker.pose.position.z = cone.z + 0.3f;
             marker.pose.orientation.w = 1.0; // 회전 없음
 
             marker.scale.x = 0.3; // 콘 지름 (고정)
             marker.scale.y = 0.3; 
-            marker.scale.z = 0.5f; // 높이는 실제 측정값
+            marker.scale.z = 0.7f; 
 
             float threshold = 300.0f;
 
@@ -500,8 +515,7 @@ public:
             text.scale.z = 0.3; 
             text.color.r = 1.0; text.color.g = 1.0; text.color.b = 1.0; text.color.a = 1.0;
             
-            text.text = "Bot: " + std::to_string((int)cone.raw_intensity) + 
-                        "\nAll: " + std::to_string((int)cone.total_intensity);
+            text.text = "Bot: " + std::to_string((int)cone.raw_intensity);
             text.lifetime = ros::Duration(0.2);
             marker_array.markers.push_back(text);
         }
