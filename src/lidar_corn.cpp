@@ -321,87 +321,76 @@ public:
         
         for (const auto &indices : cluster_indices)
         {
-            // 1. 클러스터 하나 꺼내기
             pcl::PointCloud<PointT>::Ptr cluster_cloud(new pcl::PointCloud<PointT>);
             
-            for (const auto &idx : indices.indices)
-            {
-                cluster_cloud->points.push_back(cloud_filtered->points[idx]);
-                cloud_cones->points.push_back(cloud_filtered->points[idx]);
-                //점그룸 모으기기
-            }
-
-            // 2. 위치 및 크기 계산 (Min-Max 방식 - 제일 빠름)
-            float min_x = std::numeric_limits<float>::max();
+            // [Loop 1] 점을 모으면서, min/max 범위를 먼저 구합니다.
+            float min_x = std::numeric_limits<float>::max(); 
             float max_x = std::numeric_limits<float>::lowest();
-            float min_y = std::numeric_limits<float>::max();
+            float min_y = std::numeric_limits<float>::max(); 
             float max_y = std::numeric_limits<float>::lowest();
-            float min_z = std::numeric_limits<float>::max();
+            float min_z = std::numeric_limits<float>::max(); 
             float max_z = std::numeric_limits<float>::lowest();
-
-            float cone_height = max_z - min_z;
-            float plastic_limit_z = min_z + (cone_height * 0.3f);
-
-            float plastic_intensity_sum = 0.0f;
-            int plastic_point_count = 0;
+            
             float total_intensity_sum = 0.0f;
 
-            for (const auto &p : cluster_cloud->points)
-            {
+            for (const auto &idx : indices.indices) {
+                PointT p = cloud_filtered->points[idx];
+                cluster_cloud->points.push_back(p);
+                cloud_cones->points.push_back(p);
+                
+                // 범위 갱신
                 if (p.x < min_x) min_x = p.x; 
                 if (p.x > max_x) max_x = p.x;
                 if (p.y < min_y) min_y = p.y; 
                 if (p.y > max_y) max_y = p.y;
-
+                if (p.z < min_z) min_z = p.z; 
+                if (p.z > max_z) max_z = p.z;
+                
                 total_intensity_sum += p.intensity;
+            }
 
-                if (p.z <= plastic_limit_z)
+            // [계산] 이제 min_z, max_z가 정확하므로 높이를 계산합니다.
+            float cone_height = max_z - min_z;
+            float plastic_limit_z = min_z + (cone_height * 0.3f); // 하위 30%
+            
+            float plastic_intensity_sum = 0.0f;
+            int plastic_point_count = 0;
+
+            // [Loop 2] 정확한 plastic_limit_z를 가지고 다시 점들을 확인합니다.
+            for (const auto &p : cluster_cloud->points)
+            {
+                if (p.z <= plastic_limit_z) 
                 {
                     plastic_intensity_sum += p.intensity;
                     plastic_point_count++;
                 }
-
             }
-            
-            // A. 전체 평균 계산
+
+            // 평균 계산
             float avg_total = 0.0f;
             if (cluster_cloud->size() > 0) avg_total = total_intensity_sum / cluster_cloud->size();
 
-            // B. 하위 30% 평균 계산
             float avg_plastic = 0.0f;
-            if (plastic_point_count > 0) 
-            {
-                avg_plastic = plastic_intensity_sum / plastic_point_count;
-            }
-            else avg_plastic = avg_total; // 점이 없으면 어쩔 수 없이 전체 평균 사용
+            if (plastic_point_count > 0) avg_plastic = plastic_intensity_sum / plastic_point_count;
+            else avg_plastic = avg_total; 
 
             float center_x = (min_x + max_x) / 2.0f;
             float center_y = (min_y + max_y) / 2.0f;
-            
-            float size_x = max_x - min_x; 
-            float size_y = max_y - min_y;
             float size_z = cone_height;
-            // 3. [필터링] "이 크기가 아니면 콘이 아니다!"
-            //if (size_x > 0.7f || size_y > 0.7f) continue; // 너무 뚱뚱함 (벽/차)
-            if (size_z < 0.1f) continue;                  // 너무 납작함 (노이즈)
-            //if (size_z > 1.1f) continue;                  // 너무 키 큼 (사람/기둥)
 
-            /*
-            float ratio = size_x / size_y;
-            // 비율이 0.5 ~ 2.0 사이가 아니면 (즉, 너무 길쭉하면) 버림
-            if (ratio < 0.5f || ratio > 2.0f) { cluster_id++; continue; }
-            */
+            // [디버깅 로그] 이제 SizeZ가 정상적인 값(0.5 등)으로 찍힐 겁니다.
+            ROS_INFO("Box Created! ID:%d SizeZ:%.2f Pts:%d", cluster_id, size_z, plastic_point_count);
 
-            //Trackcone 저장.
             Trackcone temp;
             temp.x = center_x;
             temp.y = center_y;
-            temp.z = min_z;
-            temp.raw_intensity = avg_plastic;
-            temp.total_intensity = avg_total;
+            temp.z = min_z; // 바닥 기준
+            
+            temp.raw_intensity = avg_plastic; 
+            temp.total_intensity = avg_total; 
             temp.id = -1;
             current_scan_cones.push_back(temp);
-
+            
             cluster_id++;
         }
 
