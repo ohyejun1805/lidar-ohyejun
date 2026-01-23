@@ -199,7 +199,7 @@ public:
         nh_.param<float>("roi_max_x", roi_max_x_, 10.0f);
         nh_.param<float>("roi_min_y", roi_min_y_, -4.0f);
         nh_.param<float>("roi_max_y", roi_max_y_, 4.0f);
-        nh_.param<float>("roi_min_z", roi_min_z_, -0.8f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
+        nh_.param<float>("roi_min_z", roi_min_z_, -1.5f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
         nh_.param<float>("roi_max_z", roi_max_z_, 0.7f);
         nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.3f);
         nh_.param<int>("min_cluster_size", min_cluster_size_, 3);
@@ -295,6 +295,31 @@ public:
         voxel_filter.setInputCloud(cloud_roi);
         voxel_filter.setLeafSize(voxel_size_, voxel_size_, voxel_size_); // 0.05 추천
         voxel_filter.filter(*cloud_filtered);
+
+        // =================================================================
+        // [New Step] 지면 제거 (RANSAC Ground Removal)
+        // 바닥(-2.0m)까지 긁어온 데이터에서 "가장 평평한 바닥"만 찾아서 지웁니다.
+        // =================================================================
+        
+        pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+        pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+        pcl::SACSegmentation<PointT> seg;
+        
+        seg.setOptimizeCoefficients(true);
+        seg.setModelType(pcl::SACMODEL_PLANE); // "평면을 찾아라"
+        seg.setMethodType(pcl::SAC_RANSAC);
+        seg.setDistanceThreshold(0.05); // [설정] 바닥에서 20cm 이내의 점들은 다 바닥으로 간주
+        seg.setInputCloud(cloud_filtered);
+        seg.segment(*inliers, *coefficients);
+
+        if (inliers->indices.size() > 0)
+        {
+            pcl::ExtractIndices<PointT> extract;
+            extract.setInputCloud(cloud_filtered);
+            extract.setIndices(inliers);
+            extract.setNegative(true); // True: 평면(바닥)을 뺀 나머지만 남김 (False면 바닥만 남김)
+            extract.filter(*cloud_filtered);
+        }
 
         // =================================================================
         // [Step 3] 군집화 (Clustering) - 바로 시작
