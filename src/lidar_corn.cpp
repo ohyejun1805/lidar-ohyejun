@@ -342,7 +342,7 @@ public:
             float cone_height = max_z - min_z;
             float plastic_limit_z = min_z + (cone_height * 0.3f);
 
-            float plastic_intenstiy_sum = 0.0f;
+            float plastic_intensity_sum = 0.0f;
             int plastic_point_count = 0;
             float total_intensity_sum = 0.0f;
 
@@ -357,7 +357,7 @@ public:
 
                 if (p.z <= plastic_limit_z)
                 {
-                    plastic_intenstiy_sum += p.intensity;
+                    plastic_intensity_sum += p.intensity;
                     plastic_point_count++;
                 }
 
@@ -369,7 +369,10 @@ public:
 
             // B. 하위 30% 평균 계산
             float avg_plastic = 0.0f;
-            if (plastic_point_count > 0) avg_plastic = plastic_intensity_sum / plastic_point_count;
+            if (plastic_point_count > 0) 
+            {
+                avg_plastic = plastic_intensity_sum / plastic_point_count;
+            }
             else avg_plastic = avg_total; // 점이 없으면 어쩔 수 없이 전체 평균 사용
 
             float center_x = (min_x + max_x) / 2.0f;
