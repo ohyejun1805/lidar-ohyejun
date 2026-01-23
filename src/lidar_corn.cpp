@@ -161,6 +161,7 @@ private:
         int id;
         float x,y,z;
         float raw_intensity;
+        float total_intensity;
         int life;
     };
     std::vector<Trackcone> map_cones_;
@@ -362,28 +363,21 @@ public:
 
             }
             
-            float final_intensity = 0.0f;
-            if (plastic_point_count > 0)
-            {
-                final_intensity = plastic_intenstiy_sum / plastic_point_count;
-            }
-            else
-            {
-                if (cluster_cloud->size() > 0)
-                {
-                    final_intensity = total_intensity_sum / cluster_cloud->size();
-                }
-            }
-            // 중심점
+            // A. 전체 평균 계산
+            float avg_total = 0.0f;
+            if (cluster_cloud->size() > 0) avg_total = total_intensity_sum / cluster_cloud->size();
+
+            // B. 하위 30% 평균 계산
+            float avg_plastic = 0.0f;
+            if (plastic_point_count > 0) avg_plastic = plastic_intensity_sum / plastic_point_count;
+            else avg_plastic = avg_total; // 점이 없으면 어쩔 수 없이 전체 평균 사용
+
             float center_x = (min_x + max_x) / 2.0f;
             float center_y = (min_y + max_y) / 2.0f;
-            float center_z = (min_z + max_z) / 2.0f;
-
-            // 크기
-            float size_x = max_x - min_x;
+            
+            float size_x = max_x - min_x; 
             float size_y = max_y - min_y;
-            float size_z = max_z - min_z;
-
+            float size_z = cone_height;
             // 3. [필터링] "이 크기가 아니면 콘이 아니다!"
             //if (size_x > 0.7f || size_y > 0.7f) continue; // 너무 뚱뚱함 (벽/차)
             if (size_z < 0.1f) continue;                  // 너무 납작함 (노이즈)
@@ -399,8 +393,9 @@ public:
             Trackcone temp;
             temp.x = center_x;
             temp.y = center_y;
-            temp.z = center_z;
-            temp.raw_intensity = final_intensity;
+            temp.z = min_z;
+            temp.raw_intensity = avg_plastic;
+            temp.total_intensity = avg_total;
             temp.id = -1;
             current_scan_cones.push_back(temp);
 
@@ -473,7 +468,7 @@ public:
             
             marker.pose.position.x = cone.x;
             marker.pose.position.y = cone.y;
-            marker.pose.position.z = cone.z;
+            marker.pose.position.z = cone.z + (marker.scale.z / 2.0f);
             marker.pose.orientation.w = 1.0; // 회전 없음
 
             marker.scale.x = 0.3; // 콘 지름 (고정)
@@ -509,11 +504,12 @@ public:
             text.action = visualization_msgs::Marker::ADD;
             text.pose.position.x = cone.x;
             text.pose.position.y = cone.y;
-            text.pose.position.z = cone.z + 0.4f;
+            text.pose.position.z = cone.z + 0.8f;
             text.scale.z = 0.3; 
             text.color.r = 1.0; text.color.g = 1.0; text.color.b = 1.0; text.color.a = 1.0;
             
-            text.text = "intensity: " + std::to_string((int)cone.raw_intensity);
+            text.text = "Bot: " + std::to_string((int)cone.raw_intensity) + 
+                        "\nAll: " + std::to_string((int)cone.total_intensity);
             text.lifetime = ros::Duration(0.2);
             marker_array.markers.push_back(text);
         }
