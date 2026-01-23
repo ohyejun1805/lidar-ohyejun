@@ -385,9 +385,9 @@ public:
             float size_z = max_z - min_z;
 
             // 3. [필터링] "이 크기가 아니면 콘이 아니다!"
-            if (size_x > 0.7f || size_y > 0.7f) continue; // 너무 뚱뚱함 (벽/차)
+            //if (size_x > 0.7f || size_y > 0.7f) continue; // 너무 뚱뚱함 (벽/차)
             if (size_z < 0.1f) continue;                  // 너무 납작함 (노이즈)
-            if (size_z > 1.1f) continue;                  // 너무 키 큼 (사람/기둥)
+            //if (size_z > 1.1f) continue;                  // 너무 키 큼 (사람/기둥)
 
             /*
             float ratio = size_x / size_y;
