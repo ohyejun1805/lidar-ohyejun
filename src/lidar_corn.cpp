@@ -198,10 +198,10 @@ public:
         nh_.param<float>("roi_max_x", roi_max_x_, 10.0f);
         nh_.param<float>("roi_min_y", roi_min_y_, -4.0f);
         nh_.param<float>("roi_max_y", roi_max_y_, 4.0f);
-        nh_.param<float>("roi_min_z", roi_min_z_, -0.9f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
+        nh_.param<float>("roi_min_z", roi_min_z_, -0.8f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
         nh_.param<float>("roi_max_z", roi_max_z_, 0.7f);
         nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.3f);
-        nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
+        nh_.param<int>("min_cluster_size", min_cluster_size_, 3);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 300);
         //ROS 파라미터에서 값을 읽고, 없으면 기본값을 넣는다.
 
