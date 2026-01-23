@@ -426,7 +426,15 @@ public:
                 
                 float dist_from_car = std::sqrt(curr.x*curr.x + curr.y*curr.y);
 
-                if (dist_from_car > 2.0f)
+                // [추가된 필터] "테이프 회피 필터"
+                // 계산된 값이 2500을 넘으면, 이건 플라스틱이 아니라 테이프만 찍힌 겁니다.
+                // 이런 값은 스무딩에 넣으면 데이터가 오염되므로, 그냥 이전 값을 유지합니다.
+                if (curr.raw_intensity > 2000.0f) 
+                {
+                    curr.raw_intensity = map_cones_[match_idx].raw_intensity;
+                }
+
+                if (dist_from_car > 4.0f)
                 {
                     float old_intensity = map_cones_[match_idx].raw_intensity;
                     float new_intensity = curr.raw_intensity;
