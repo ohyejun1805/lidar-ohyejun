@@ -40,9 +40,9 @@ public:
         // Q (프로세스 노이즈) - 튜닝 포인트
         Q_ = Eigen::MatrixXd::Identity(6, 6);
         Q_ *= 0.1; 
-        Q_(3,3) = 5.0; // 속도 변화 가능성 큼
-        Q_(4,4) = 1.0; // 각도 변화
-        Q_(5,5) = 1.0; // 각속도 변화
+        Q_(3,3) = 2.0; // 속도 변화 가능성 큼
+        Q_(4,4) = 0.5; // 각도 변화
+        Q_(5,5) = 0.5; // 각속도 변화
 
         // R (관측 노이즈) - [x, y, z, yaw] 4개 관측
         R_ = Eigen::MatrixXd::Identity(4, 4);
@@ -406,6 +406,20 @@ private:
         // [1] Yaw 추출 (Quaternion -> Yaw)
         double measurement_yaw = getYawFromQuaternion(detection.bbox.center.orientation);
 
+        if (track.age < 3) 
+        {
+            double last_yaw = track.kf.state_(4);       // 직전 Yaw
+            double diff_yaw = measurement_yaw - last_yaw; // 각도 변화량
+
+            // 각도 정규화 (-PI ~ PI) - 필수!
+            while (diff_yaw > M_PI) diff_yaw -= 2.0 * M_PI;
+            while (diff_yaw < -M_PI) diff_yaw += 2.0 * M_PI;
+
+            // 시간으로 나눠서 각속도 계산 후 강제 주입
+            double instant_yaw_rate = diff_yaw / dt;
+            track.kf.state_(5) = instant_yaw_rate; 
+        }
+
         // [2] EKF 예측 & 업데이트
         track.kf.predict(dt);
         track.kf.update(measurement_pos, measurement_yaw);
@@ -418,7 +432,7 @@ private:
         double abs_vx = obj_vx + my_car_velocity_; // 절대 속도
 
         // 절대 속도가 3.6km/h (1.0m/s) 미만이면 정지로 간주
-        if (std::abs(abs_vx) < 1.0) 
+        if (std::abs(abs_vx) < 0.5) 
         {
             track.kf.setVelocityZero(); // 속도를 0으로 죽임 (Ghost Effect 방지)
         }
@@ -471,8 +485,8 @@ public:
         ROS_INFO("GIGACHA LiDAR Tracking Node (EKF-CTRV + Static Filter) Starting...");
         
         nh_.param<float>("max_mahalanobis_distance", max_mahalanobis_distance_, 3.0f);
-        nh_.param<float>("max_disappeared_frames", max_disappeared_frames_, 3.0f);
-        nh_.param<float>("gating_threshold", gating_threshold_, 16.0f); 
+        nh_.param<float>("max_disappeared_frames", max_disappeared_frames_, 5.0f);
+        nh_.param<float>("gating_threshold", gating_threshold_, 10.0f); 
         
         detection_sub_ = nh_.subscribe("/gigacha/lidar/bounding_boxes", 1, &GigachaLidarTracking::detectionCallback, this);
         
@@ -526,7 +540,7 @@ public:
         vision_msgs::Detection3DArray tracked_array;
         tracked_array.header = msg->header;
         for (const auto& track : tracks_) {
-            if (track.disappeared_count == 0) {
+            if (track.disappeared_count == 0 && track.age > 3) {
                 vision_msgs::Detection3D tracked_det = track.detection;
                 tracked_det.bbox.center.position = track.kf.getPosition();
                 // 결과에 속도 정보도 넣으면 좋지만, 여기선 ID만

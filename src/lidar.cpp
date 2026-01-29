@@ -110,6 +110,91 @@ With Pose(위치/자세) : 그리고 내 차 기준으로 어디 위치에 서 �
 using PointT = pcl::PointXYZI;
 // XYZ 좌표에 intensity(강도)까지 변수로 가지는 Point 사용 (intensity는 차선 식별에 도움을 주는 변수)
 
+//제일 Fit한 Rect 찾기
+cv::RotatedRect getBestFitRect(const std::vector<cv::Point2f>& points)
+{
+    if (points.size() < 5) return cv::minAreaRect(points);
+
+    float best_angle = 0.0f;
+    float min_area = std::numeric_limits<float>::max();
+    
+    cv::Point2f center(0, 0);
+    for (const auto& p : points) center += p;
+    center.x /= points.size();
+    center.y /= points.size();
+    //모든 점 넣으면서 무게 중심을 구함.
+
+    // 0도 ~ 90도까지 2도 간격으로 회전 테스트
+    for (float angle = 0.0f; angle < 90.0f; angle += 2.0f)
+    {
+        float theta = angle * CV_PI / 180.0f;//라디안으로로
+        float cos_t = std::cos(theta);
+        float sin_t = std::sin(theta);
+
+        float min_x = std::numeric_limits<float>::max();
+        float max_x = std::numeric_limits<float>::lowest();
+        float min_y = std::numeric_limits<float>::max();
+        float max_y = std::numeric_limits<float>::lowest();
+
+        for (const auto& p : points)
+        {
+            float tx = p.x - center.x;
+            float ty = p.y - center.y;
+            //점을 원점 기준으로 평행이동.
+            float rx = tx * cos_t - ty * sin_t;
+            float ry = tx * sin_t + ty * cos_t;
+            // 2. 회전 변환 공식 적용 (Rotation Matrix)
+            // x' = x cosθ - y sinθ
+            // y' = x sinθ + y cosθ
+
+            if (rx < min_x) min_x = rx;
+            if (rx > max_x) max_x = rx;
+            if (ry < min_y) min_y = ry;
+            if (ry > max_y) max_y = ry;
+        }
+
+        float area = (max_x - min_x) * (max_y - min_y);
+
+        if (area < min_area)
+        {
+            min_area = area;
+            best_angle = angle;
+        }
+    }
+    //확정된 angle로 다시 너비, 높이 계산
+    float theta = best_angle * CV_PI / 180.0f;
+    float cos_t = std::cos(theta);
+    float sin_t = std::sin(theta);
+
+    float min_x = std::numeric_limits<float>::max();
+    float max_x = std::numeric_limits<float>::lowest();
+    float min_y = std::numeric_limits<float>::max();
+    float max_y = std::numeric_limits<float>::lowest();
+
+    for (const auto& p : points)
+    {
+        float tx = p.x - center.x;
+        float ty = p.y - center.y;
+        
+        // best_angle로 회전
+        float rx = tx * cos_t - ty * sin_t;
+        float ry = tx * sin_t + ty * cos_t;
+
+        if (rx < min_x) min_x = rx;
+        if (rx > max_x) max_x = rx;
+        if (ry < min_y) min_y = ry;
+        if (ry > max_y) max_y = ry;
+    }
+
+    // 이제 진짜 너비와 높이
+    float width = max_x - min_x;
+    float height = max_y - min_y;
+    
+    // OpenCV RotatedRect 생성해서 리턴
+    return cv::RotatedRect(center, cv::Size2f(width, height), best_angle);
+}
+
+
 class GigachaLidarClustering//클래스 선언
 {
 private:
