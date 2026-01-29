@@ -310,6 +310,10 @@ public:
         bbox_pub_ = nh_.advertise<vision_msgs::Detection3DArray>("/gigacha/lidar/bounding_boxes", 1);
         //Detection3DArray : 중심 좌표, 크기 (가로세로높이), 회전 정보를 보내는 박스 배열. 주변에 장애물이 최소 1개 이상일테니까
         //그 장애물 배열들을 싹 publish 하는거임.
+
+        // 마커 퍼블리셔 등록
+        marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/gigacha/lidar/markers", 1);
+        
         lidar_sub_ = nh_.subscribe("/lidar3D", 1, &GigachaLidarClustering::lidarCallback, this);
         /*
         lidar_sub_은 수신받는다(subscribe),"/velodyne_points"라는 데이터만 최신거 1개,
@@ -527,6 +531,7 @@ public:
         //발견된 물체들을 담을 Detection3DArray 메시지 객체 생성
         detection_array.header = msg->header; 
         // 헤더 안에 있는 내용물(시간, 좌표계 등)을 한 방에 복사함
+        visualization_msgs::MarkerArray marker_array;
 
         int cluster_id = 0;
         
@@ -566,7 +571,7 @@ public:
             }
             //x점 y점 points_2d 벡터에 pushback
 
-            cv::RotatedRect rect = cv::minAreaRect(points_2d);
+            cv::RotatedRect rect = getBestFitRect(points_2d);
             //사각형 생성.
 
             //중심점점
@@ -581,28 +586,17 @@ public:
             float angle_deg = rect.angle;
             //x축(수평선) 기준으로 얼마나 기울어져있는지
 
-            // 변을 무조건 차의 '옆면(Heading)'으로 잡기
-            // 이유: 보통 차는 폭(1.8m)보다 길이(4.5m)가 깁니다.
-            if (size_x < size_y) {
+            // 박스 정렬 및 Rear View(납작한 뒷면) 보정
+            // 1. 긴 변을 X축(Heading)으로
+            if (size_x < size_y) 
+            {
                 std::swap(size_x, size_y);
                 angle_deg += 90.0f;
             }
-            /*
-            기본, ros에서는 자동차의 x축 방향이 무조건 차의 긴쪽 길이어야 한다네요.
-            근데 내 생각에는 lidar 찍으면 L자에서 y축이 무조건 더 길테니까 swap을 해주는것 같아요.
-            각도도 수정해주고,
-            */
-
-            
-            // [보정 2] 예외 처리: "앞차 뒷모습 (Rear View)" 문제 해결
-            // 상황: 내 차선 앞차가 뒷범퍼만 보여서 가로로 납작한 'ㅡ'자 모양임.
-            // 특징: 긴 변(size_x)이 차폭(약 1.8m)이고, 짧은 변(size_y)이 아주 얇음(0.2m 등).
-            // 조치: 이때는 긴 변이 '옆면'이 아니라 '뒷면'이므로 다시 90도 돌려야 함.
-            
-            // 조건: "긴 변이 1.5m 넘는데(차폭), 짧은 변이 1.0m도 안 된다(차길이라기엔 너무 짧음)"
-            if (size_x > 1.5f && size_y < 1.0f) {
-                 // 다시 90도 회전 (원상 복구 -> 짧은 쪽을 진행 방향으로)
-                 std::swap(size_x, size_y);
+            // 2. 만약 긴 변이 차폭(1.2m~1.8m)이고, 짧은 변이 너무 얇다면(0.8m 미만) -> 뒷모습임
+            if (size_x > 1.2f && size_y < 0.8f) 
+            {
+                 std::swap(size_x, size_y); // 다시 돌려서 짧은 쪽을 진행방향으로
                  angle_deg += 90.0f;
             }
 
@@ -642,18 +636,21 @@ public:
 
             detection_array.detections.push_back(detection);
 
-            // [Step 7] RViz Marker 생성 (초록색 박스)
+            // Rviz Marker 채우기
             visualization_msgs::Marker marker;
             marker.header = msg->header;
-            marker.ns = "pca_box";
+            marker.ns = "cluster_box";
             marker.id = cluster_id;
             marker.type = visualization_msgs::Marker::CUBE;
             marker.action = visualization_msgs::Marker::ADD;
             marker.pose = detection.bbox.center;
+            marker.pose.orientation = detection.bbox.center.orientation; // 회전 반영!
             marker.scale = detection.bbox.size;
-            marker.color.r = 0.0f; marker.color.g = 1.0f; marker.color.b = 0.0f; // 초록색 박스
+            marker.color.r = 0.0f; marker.color.g = 1.0f; marker.color.b = 0.0f; // 초록색
             marker.color.a = 0.5f;
             marker.lifetime = ros::Duration(0.1);
+            
+            // 여기서 push_back 하려면 marker_array가 루프 밖에 있어야 함 (이제 됨)
             marker_array.markers.push_back(marker);
 
             cluster_id++;
@@ -707,6 +704,9 @@ public:
 
         bbox_pub_.publish(detection_array);
         //detection_array 메시지를 /gigacha/lidar/bounding_boxes 토픽으로 publish
+
+        //마커 퍼블리시 추가
+        marker_pub_.publish(marker_array);
 
         //디버그 로그 출력
         ROS_DEBUG("origin=%zu down=%zu crop=%zu clusters=%zu det=%zu",
