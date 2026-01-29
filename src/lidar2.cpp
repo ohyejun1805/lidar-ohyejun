@@ -323,7 +323,7 @@ public:
             }
             // 내 앞에 달리고 있는 차는 폭이 넓고 짧은 변이 너무 얇으면,
             // 차의 옆모습이 아니고, 뒷모습이라고 인식! 다시 swap
-            if (size_x > 1.2f && size_y < 0.8f) {
+            if (size_x > 1.2f && size_y < 1.0f) {
                  std::swap(size_x, size_y); 
                  angle_deg += 90.0f;
             }
@@ -332,7 +332,7 @@ public:
             //여기서 걸러지면 tracking 안함.
 
             // 바닥에 붙어있고(-1.0m 이하), 높이가 낮으면(40cm 미만) 도보
-            if (min_z < -1.0f && size_z < 0.4f) continue; 
+            if (min_z < -1.0f && size_z < 0.2f) continue; 
 
             // 대각선과 짧은 옆면 구함.
             float diagonal = std::sqrt(size_x*size_x + size_y*size_y);
@@ -357,7 +357,7 @@ public:
             if (size_z > 5.0f) continue; 
 
             //너무 작은 노이즈
-            if (size_x * size_y < 0.2f) continue;
+            if (size_x * size_y < 0.05f) continue;
 
             float yaw = angle_deg * M_PI / 180.0f; 
             Eigen::Quaternionf q;
