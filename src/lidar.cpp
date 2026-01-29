@@ -107,6 +107,9 @@ With Pose(위치/자세) : 그리고 내 차 기준으로 어디 위치에 서 �
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
 
+#include <visualization_msgs/Marker.h>
+#include <visualization_msgs/MarkerArray.h>
+
 using PointT = pcl::PointXYZI;
 // XYZ 좌표에 intensity(강도)까지 변수로 가지는 Point 사용 (intensity는 차선 식별에 도움을 주는 변수)
 
