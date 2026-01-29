@@ -9,7 +9,6 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
-  <!-- ROS dependencies -->
   <depend>roscpp</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
@@ -17,11 +16,15 @@
   <depend>pcl_ros</depend>
   <depend>pcl_conversions</depend>
 
-  <!-- System dependencies -->
+  <depend>nav_msgs</depend>
+
+  <depend>visualization_msgs</depend>
+
   <depend>libeigen3-dev</depend>
   <depend>libpcl-all-dev</depend>
+  
+  <depend>libopencv-dev</depend>
 
   <export>
-    <!-- Other tools can request additional information be placed here -->
-  </export>
+    </export>
 </package>

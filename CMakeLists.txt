@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(lidar_ohyejun)
 
-## [권장] Eigen과 최신 라이브러리 호환을 위해 C++14 권장 (C++11도 되긴 함)
+## [권장] C++14 표준 사용
 add_compile_options(-std=c++14)
 
 ## Find catkin macros and libraries
@@ -12,9 +12,8 @@ find_package(catkin REQUIRED COMPONENTS
   vision_msgs
   pcl_ros
   pcl_conversions
-  # [★추가됨 1] 내 차 속도(Odometry)와 시각화(Marker)를 위해 필수
-  nav_msgs
-  visualization_msgs
+  nav_msgs            # [필수] 내 차 속도
+  visualization_msgs  # [필수] 마커 시각화
 )
 
 ## System dependencies
@@ -26,7 +25,7 @@ find_package(OpenCV REQUIRED)
 include_directories(
   include
   ${catkin_INCLUDE_DIRS}
-  ${Eigen3_INCLUDE_DIRS}  # [수정] 대소문자 주의 (보통 Eigen3_INCLUDE_DIRS 사용)
+  ${Eigen3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
@@ -42,13 +41,12 @@ catkin_package(
     vision_msgs
     pcl_ros
     pcl_conversions
-    # [★추가됨 2] 다른 패키지에서 참조할 때 필요
     nav_msgs
     visualization_msgs
   DEPENDS
-    Eigen3
     PCL
     OpenCV
+    # [★수정됨] 여기서 Eigen3를 지웠습니다! (빌드 경고 해결)
 )
 
 ###########
@@ -71,8 +69,9 @@ add_dependencies(gigacha_lidar_clustering
   ${catkin_EXPORTED_TARGETS}
 )
 
-## 2. Tracking Node (EKF)
-# [주의] 파일명이 src/tracking.cpp 인지 src/tracking2.cpp 인지 꼭 확인하세요!
+## 2. Tracking Node
+# [★주의] 본인 파일명이 tracking.cpp 인지 tracking2.cpp 인지 확인하고 아래 줄을 맞추세요!
+# 현재는 tracking2.cpp 로 되어 있습니다.
 add_executable(gigacha_lidar_tracking
   src/tracking2.cpp
 )
@@ -81,8 +80,6 @@ target_link_libraries(gigacha_lidar_tracking
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}
-  # Eigen은 보통 헤더 온리라 링크 안 해도 되지만, 문제 생기면 아래 주석 해제
-  # ${Eigen3_LIBRARIES} 
 )
 
 add_dependencies(gigacha_lidar_tracking
