@@ -38,13 +38,17 @@ cv::RotatedRect getBestFitRect(const std::vector<cv::Point2f>& points)
 {
     if (points.size() < 5) return cv::minAreaRect(points);
 
+    // convexHull 모든 점을 포함하는 외곽선 추출
+    std::vector<cv::Point2f> hull;
+    cv::convexHull(points, hull);
+
     float best_angle = 0.0f;
     float min_area = std::numeric_limits<float>::max();
     
     cv::Point2f center(0, 0);
-    for (const auto& p : points) center += p;
-    center.x /= points.size();
-    center.y /= points.size();
+    for (const auto& p : hull) center += p;
+    center.x /= hull.size();
+    center.y /= hull.size();
 
     // 1. 각도 탐색 (0~90도) 2도씩
     for (float angle = 0.0f; angle < 90.0f; angle += 2.0f)
@@ -58,7 +62,7 @@ cv::RotatedRect getBestFitRect(const std::vector<cv::Point2f>& points)
         float min_y = std::numeric_limits<float>::max();
         float max_y = std::numeric_limits<float>::lowest();
 
-        for (const auto& p : points)
+        for (const auto& p : hull)
         {
             float tx = p.x - center.x;
             float ty = p.y - center.y;
@@ -90,7 +94,7 @@ cv::RotatedRect getBestFitRect(const std::vector<cv::Point2f>& points)
     float min_y = std::numeric_limits<float>::max();
     float max_y = std::numeric_limits<float>::lowest();
 
-    for (const auto& p : points)
+    for (const auto& p : hull)
     {
         float tx = p.x - center.x;
         float ty = p.y - center.y;
@@ -146,8 +150,8 @@ public:
         nh_.param<float>("voxel_size", voxel_size_, 0.12f);
         nh_.param<float>("roi_min_x", roi_min_x_, -10.0f);
         nh_.param<float>("roi_max_x", roi_max_x_, 30.0f);
-        nh_.param<float>("roi_min_y", roi_min_y_, -6.0f);
-        nh_.param<float>("roi_max_y", roi_max_y_, 6.0f);
+        nh_.param<float>("roi_min_y", roi_min_y_, -5.0f);
+        nh_.param<float>("roi_max_y", roi_max_y_, 5.0f);
         nh_.param<float>("roi_min_z", roi_min_z_, -5.0f); 
         nh_.param<float>("roi_max_z", roi_max_z_, 0.3f);
         
@@ -245,9 +249,30 @@ public:
 
         if (cloud_obstacles_total->empty()) return;
 
+        // ROI Slicing 연석 제거 + 트래킹용 분리
+        
+        // 바닥보다 60cm 위의 점들만 트래킹 후보로 사용
+        pcl::PointCloud<PointT>::Ptr cloud_tracking_input(new pcl::PointCloud<PointT>);
+        for (const auto& p : cloud_obstacles_total->points) {
+            if (p.z > -1.2f) 
+            {
+                cloud_tracking_input->push_back(p);
+            }
+        }
+
+        // 트래킹할 물체가 없어도 제어기용 데이터는 보내고 리턴
+        if (cloud_tracking_input->empty()) 
+        {
+            sensor_msgs::PointCloud2 out;
+            pcl::toROSMsg(*cloud_obstacles_total, out); 
+            out.header = msg->header;
+            cloud_ground_removed_pub_.publish(out);
+            return;
+        }
+
         //2D로 점 눌러서 clustering 가짜 2D 점으로 묶고, 원본 점으로 box 침.
         pcl::PointCloud<PointT>::Ptr cloud_2d(new pcl::PointCloud<PointT>);
-        pcl::copyPointCloud(*cloud_obstacles_total, *cloud_2d);
+        pcl::copyPointCloud(*cloud_tracking_input, *cloud_2d);
 
         for (auto& p : cloud_2d->points) { p.z = 0.0f; }
         //모든 점을 z=0으로 바꿈.
@@ -280,23 +305,25 @@ public:
         for (const auto &indices : cluster_indices)
         {
             pcl::PointCloud<PointT>::Ptr cluster(new pcl::PointCloud<PointT>);
+
+            if (indices.indices.size() < 10) continue;
             
             for (const auto &idx : indices.indices)
             {
-                // 점 좌표는 원본(cloud_obstacles_total)에서 가져옴!
-                PointT p = cloud_obstacles_total->points[idx];
+                // 필터링된 cloud_tracking_input 에서 점을 가져옴.
+                PointT p = cloud_tracking_input->points[idx];
                 p.intensity = static_cast<float>(cluster_id % 100); 
                 cluster->points.push_back(p);
                 cloud_clustered->points.push_back(p);
             }
             
-            // Z축 범위 계산
-            float min_z = std::numeric_limits<float>::max();
+            // 바닥(-1.8)부터 지붕(max_z)까지
             float max_z = std::numeric_limits<float>::lowest();
-            for (const auto& p : cluster->points) {
-                if (p.z < min_z) min_z = p.z;
+            for (const auto& p : cluster->points) 
+            {
                 if (p.z > max_z) max_z = p.z;
             }
+            float min_z = -1.8f; // 센서 높이 고려하여 바닥 고정!
 
             // 2D 박스 피팅
             std::vector<cv::Point2f> points_2d;
@@ -323,22 +350,24 @@ public:
             }
             // 내 앞에 달리고 있는 차는 폭이 넓고 짧은 변이 너무 얇으면,
             // 차의 옆모습이 아니고, 뒷모습이라고 인식! 다시 swap
-            if (size_x > 1.2f && size_y < 1.0f) {
+            // Rear View 보정
+            bool is_rear_view = (size_x > 1.2f && size_y < 1.0f && std::abs(center_y) < 3.0f);
+            if (is_rear_view) {
                  std::swap(size_x, size_y); 
                  angle_deg += 90.0f;
             }
-
             //도보, 건물, 큰 차 구분.
             //여기서 걸러지면 tracking 안함.
 
-            // 바닥에 붙어있고(-1.0m 이하), 높이가 낮으면(40cm 미만) 도보
-            if (min_z < -1.0f && size_z < 0.2f) continue; 
+            // Snap-to-Grid
+            float abs_angle = std::abs(angle_deg);
+            if (abs_angle < 10.0f) angle_deg = 0.0f;
+            else if (std::abs(abs_angle - 90.0f) < 10.0f) angle_deg = 90.0f;
+            else if (std::abs(abs_angle - 180.0f) < 10.0f) angle_deg = 180.0f;
 
-            // 대각선과 짧은 옆면 구함.
+            // 필터링 (ROI Slicing을 했으므로 조건 완화)
             float diagonal = std::sqrt(size_x*size_x + size_y*size_y);
             float min_side = std::min(size_x, size_y);
-
-            //나랑 좌우로 얼마나 떨어져 있냐(abs는 절대값)
             float abs_y = std::abs(center_y);
 
             // 대각선 6m 이상
@@ -353,8 +382,8 @@ public:
                 if (abs_y > 5.0f) continue; 
             }
 
-            //높이 5m
-            if (size_z > 5.0f) continue; 
+            //높이 4.5m
+            if (size_z > 4.5f) continue; 
 
             //너무 작은 노이즈
             if (size_x * size_y < 0.05f) continue;
