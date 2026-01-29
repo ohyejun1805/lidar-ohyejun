@@ -156,7 +156,7 @@ public:
         nh_.param<float>("roi_max_z", roi_max_z_, 0.3f);
         
         // 차와 벽을 분리 위해 Tolerance를 줄임
-        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.25f);
+        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.8f);
         nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 5000);
 
@@ -254,7 +254,7 @@ public:
         // 바닥보다 60cm 위의 점들만 트래킹 후보로 사용
         pcl::PointCloud<PointT>::Ptr cloud_tracking_input(new pcl::PointCloud<PointT>);
         for (const auto& p : cloud_obstacles_total->points) {
-            if (p.z > -1.2f) 
+            if (p.z > -1.5f) 
             {
                 cloud_tracking_input->push_back(p);
             }
@@ -361,7 +361,17 @@ public:
 
             // Snap-to-Grid
             float abs_angle = std::abs(angle_deg);
-            if (abs_angle < 10.0f) angle_deg = 0.0f;
+
+            // 코너 짤림 해결 (모서리 조각 강제 정렬)
+            // 박스가 작고(2m 미만), 각도가 대각선(20~70도)이면 직진으로 간주
+            bool is_corner_chunk = (size_x < 2.0f && size_y < 2.0f); 
+            bool is_diagonal = (abs_angle > 20.0f && abs_angle < 70.0f);
+
+            if (is_corner_chunk && is_diagonal)
+            {
+                angle_deg = 0.0f;
+            }
+
             else if (std::abs(abs_angle - 90.0f) < 10.0f) angle_deg = 90.0f;
             else if (std::abs(abs_angle - 180.0f) < 10.0f) angle_deg = 180.0f;
 
