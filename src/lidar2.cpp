@@ -425,7 +425,7 @@ public:
         //제어용 지면제거만 한 모든 점들.
         sensor_msgs::PointCloud2 out;
         pcl::toROSMsg(*cloud_obstacles_total, out); 
-        out.header = msg->header
+        out.header = msg->header;
         cloud_ground_removed_pub_.publish(out);
 
         if (publish_clustered_) {
