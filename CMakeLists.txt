@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(lidar_ohyejun)
 
-## Compile as C++11, supported in ROS Kinetic and newer
-add_compile_options(-std=c++11)
+## [권장] C++14 표준 사용
+add_compile_options(-std=c++14)
 
 ## Find catkin macros and libraries
 find_package(catkin REQUIRED COMPONENTS
@@ -12,17 +12,22 @@ find_package(catkin REQUIRED COMPONENTS
   vision_msgs
   pcl_ros
   pcl_conversions
+  nav_msgs            # [필수] 내 차 속도
+  visualization_msgs  # [필수] 마커 시각화
 )
 
-## System dependencies are found with CMake's conventions
+## System dependencies
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
+find_package(OpenCV REQUIRED)
 
 ## Specify additional locations of header files
 include_directories(
+  include
   ${catkin_INCLUDE_DIRS}
-  ${EIGEN3_INCLUDE_DIR}
+  ${Eigen3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
 )
 
 ## Declare this project as a catkin package
@@ -36,52 +41,44 @@ catkin_package(
     vision_msgs
     pcl_ros
     pcl_conversions
+    nav_msgs
+    visualization_msgs
   DEPENDS
-    Eigen3
     PCL
+    OpenCV
 )
 
 ###########
 ## Build ##
 ###########
 
-## Specify additional locations of header files
-include_directories(
-  include
-  ${catkin_INCLUDE_DIRS}
-  ${EIGEN3_INCLUDE_DIR}
-  ${PCL_INCLUDE_DIRS}
-)
-
-## Declare a C++ executable
+## 1. Clustering Node
 add_executable(gigacha_lidar_clustering
   src/lidar.cpp
 )
 
-## Specify libraries to link a library or executable target against
 target_link_libraries(gigacha_lidar_clustering
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
 )
 
-## Add cmake target dependencies of the executable
 add_dependencies(gigacha_lidar_clustering
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
   ${catkin_EXPORTED_TARGETS}
 )
 
-## Declare a C++ executable for tracking
+## 2. Tracking Node
 add_executable(gigacha_lidar_tracking
   src/tracking2.cpp
 )
 
-## Specify libraries to link a library or executable target against
 target_link_libraries(gigacha_lidar_tracking
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
 )
 
-## Add cmake target dependencies of the executable
 add_dependencies(gigacha_lidar_tracking
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
   ${catkin_EXPORTED_TARGETS}
@@ -91,7 +88,6 @@ add_dependencies(gigacha_lidar_tracking
 ## Install ##
 #############
 
-# Mark executables and/or libraries for installation
 install(TARGETS
   gigacha_lidar_clustering
   gigacha_lidar_tracking
@@ -99,16 +95,3 @@ install(TARGETS
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
-
-###########
-## Test ##
-###########
-
-## Add gtest based C++ test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_lidar_ohyejun.cpp)
-# if(TARGET ${PROJECT_NAME}-test)
-#   target_link_libraries(${PROJECT_NAME}-test ${catkin_LIBRARIES})
-# endif()
-
-## Add folders to be run by python nosetests
-# catkin_add_nosetests(test)
