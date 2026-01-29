@@ -17,12 +17,17 @@ find_package(catkin REQUIRED COMPONENTS
 ## System dependencies are found with CMake's conventions
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
+# [★추가됨 1] OpenCV 패키지 찾기
+find_package(OpenCV REQUIRED)
 
 ## Specify additional locations of header files
 include_directories(
+  include
   ${catkin_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
+  # [★추가됨 2] OpenCV 헤더 경로 포함
+  ${OpenCV_INCLUDE_DIRS}
 )
 
 ## Declare this project as a catkin package
@@ -39,21 +44,15 @@ catkin_package(
   DEPENDS
     Eigen3
     PCL
+    # [★추가됨 3] 패키지 의존성에 OpenCV 추가 (선택사항이나 권장)
+    OpenCV
 )
 
 ###########
 ## Build ##
 ###########
 
-## Specify additional locations of header files
-include_directories(
-  include
-  ${catkin_INCLUDE_DIRS}
-  ${EIGEN3_INCLUDE_DIR}
-  ${PCL_INCLUDE_DIRS}
-)
-
-## Declare a C++ executable
+## Declare a C++ executable (Clustering)
 add_executable(gigacha_lidar_clustering
   src/lidar.cpp
 )
@@ -62,6 +61,8 @@ add_executable(gigacha_lidar_clustering
 target_link_libraries(gigacha_lidar_clustering
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
+  # [★추가됨 4] 클러스터링 노드에 OpenCV 라이브러리 링크 (필수!)
+  ${OpenCV_LIBRARIES}
 )
 
 ## Add cmake target dependencies of the executable
@@ -79,6 +80,8 @@ add_executable(gigacha_lidar_tracking
 target_link_libraries(gigacha_lidar_tracking
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
+  # [선택] 트래킹 쪽도 나중에 OpenCV 쓸 수 있으니 미리 넣어두면 좋음
+  ${OpenCV_LIBRARIES}
 )
 
 ## Add cmake target dependencies of the executable
@@ -99,16 +102,3 @@ install(TARGETS
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
-
-###########
-## Test ##
-###########
-
-## Add gtest based C++ test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_lidar_ohyejun.cpp)
-# if(TARGET ${PROJECT_NAME}-test)
-#   target_link_libraries(${PROJECT_NAME}-test ${catkin_LIBRARIES})
-# endif()
-
-## Add folders to be run by python nosetests
-# catkin_add_nosetests(test)

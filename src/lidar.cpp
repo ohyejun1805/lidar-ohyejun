@@ -104,6 +104,9 @@ With Pose(위치/자세) : 그리고 내 차 기준으로 어디 위치에 서 �
 #include <pcl/common/common.h>     // Min/Max 계산용
 #include <pcl/common/transforms.h> // 점구름 회전/이동 변환용
 
+#include <opencv2/opencv.hpp>
+#include <opencv2/core/eigen.hpp>
+
 using PointT = pcl::PointXYZI;
 // XYZ 좌표에 intensity(강도)까지 변수로 가지는 Point 사용 (intensity는 차선 식별에 도움을 주는 변수)
 
@@ -149,6 +152,9 @@ private:
     //송신자(군집화), 물체별로 색깔이 칠해진 최종 점구름 데이터를 보냅니다. 
     ros::Publisher bbox_pub_;
     //ROS의 publisher 변수임. 바운딩 박스 관련 메시지를 발행하는데 사용함.
+
+    ros::Publisher marker_pub_;
+
     float voxel_size_;//3D 픽셀 크기 변수
     float roi_min_x_, roi_max_x_;
     float roi_min_y_, roi_max_y_;
@@ -183,9 +189,9 @@ public:
         nh_.param<float>("roi_max_y", roi_max_y_, 6.0f);
         nh_.param<float>("roi_min_z", roi_min_z_, -5.0f); // 수정 -1.8 대신 -5로 넉넉하게 잡음.
         nh_.param<float>("roi_max_z", roi_max_z_, 0.3f);
-        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.6f);
-        nh_.param<int>("min_cluster_size", min_cluster_size_, 3);
-        nh_.param<int>("max_cluster_size", max_cluster_size_, 6000);
+        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.5f);
+        nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
+        nh_.param<int>("max_cluster_size", max_cluster_size_, 5000);
         //ROS 파라미터에서 값을 읽고, 없으면 기본값을 넣는다.
 
         nh_.param<bool>("publish_origin", publish_origin_, true);
@@ -292,7 +298,7 @@ public:
         // 최종적으로 "장애물(바닥 아님)"만 모을 점구름 통을 만듭니다.
         pcl::PointCloud<PointT>::Ptr cloud_obstacles_total(new pcl::PointCloud<PointT>);
 
-        /*
+        
         // 3개의 구역을 설정합니다. (단위: 미터)
         // Zone 1: roi_min_x ~ 10m (가까운 곳)
         // Zone 2: 10m ~ 25m (중간)
@@ -372,7 +378,7 @@ public:
             // [4단계] 찾은 장애물들을 최종 바구니에 쏟아 붓습니다.
             *cloud_obstacles_total += *cloud_zone_obstacle;
         }
-        */
+        
 
         // ====================================================================
         // [중요] 이후 코드 연결을 위해 변수 이름 주의!
@@ -380,7 +386,6 @@ public:
         // 바닥이 제거된 'cloud_obstacles_total'을 넣어야 합니다.
         // ====================================================================
 
-        *cloud_obstacles_total = *cloud_crop;
 
         if (cloud_obstacles_total->empty())
         {
@@ -436,82 +441,132 @@ public:
         // 헤더 안에 있는 내용물(시간, 좌표계 등)을 한 방에 복사함
 
         int cluster_id = 0;
-        // [수정됨] PCA를 적용한 반복문 시작
+        
+        // 클러스터링 루프 시작
         for (const auto &indices : cluster_indices)
-        //for 문을 군집화 결과(cluster_indices)를 indices에 하나씩 담고 돌린다.
         {
-            if (indices.indices.empty())//군집화된 인덱스가 비어있으면
+            pcl::PointCloud<PointT>::Ptr cluster(new pcl::PointCloud<PointT>);
+            //cluster 라는 이름의 pointcloud 동적 객체 스마트 포인터로 지정
+            
+            // 1. 클러스터 포인트 추출
+            for (const auto &idx : indices.indices)
             {
-                cluster_id++;//다음 군집으로 넘어감
-                continue;
+                PointT p = cloud_obstacles_total->points[idx];
+                //cloud_obstacles 점 지정정
+                p.intensity = static_cast<float>(cluster_id % 100); // 색깔 구분용
+                cluster->points.push_back(p);
+                //cluster에도 넣고고
+                cloud_clustered->points.push_back(p);
+                //cloud_clustered에도 넣음.
             }
-
-            //어떤값이 들어와도 min또는 max가 되도록 초기값을 양극단으로 설정
-            float min_x = std::numeric_limits<float>::max();
-            float max_x = std::numeric_limits<float>::lowest();
-            float min_y = std::numeric_limits<float>::max();
-            float max_y = std::numeric_limits<float>::lowest();
+            
+            //2D OpenCV MinAreaRect로 함.
+        
             float min_z = std::numeric_limits<float>::max();
             float max_z = std::numeric_limits<float>::lowest();
-
-            for (const auto &idx : indices.indices)//군집화된 점들의 인덱스 하나씩 꺼내서
-            {
-                const auto &p = cloud_crop->points[idx];//cloud_crop에서 해당 인덱스의 점을 p에 저장
-                min_x = std::min(min_x, p.x);
-                max_x = std::max(max_x, p.x);
-                min_y = std::min(min_y, p.y);
-                max_y = std::max(max_y, p.y);
-                min_z = std::min(min_z, p.z);
-                max_z = std::max(max_z, p.z);//각 축별 최소값과 최대값 갱신
-
-                PointT q = p;//원본 점은 바꾸면 안되니까 복사본 q 생성
-                q.intensity = static_cast<float>(cluster_id);
-                //intensity 값을 군집 아이디로 설정해서 색깔 다르게 만듬.
-                cloud_clustered->points.push_back(q);
-                //cloud_clustered에 q점 추가
+            for (const auto& p : cluster->points) {
+                if (p.z < min_z) min_z = p.z;
+                if (p.z > max_z) max_z = p.z;
             }
+            //z 정보 미리 저장장
 
-            float size_x = max_x - min_x;
-            float size_y = max_y - min_y;
+            std::vector<cv::Point2f> points_2d;
+            //2d 점 벡터 생성성
+            for (const auto& p : cluster->points) 
+            {
+                points_2d.push_back(cv::Point2f(p.x, p.y));
+            }
+            //x점 y점 points_2d 벡터에 pushback
+
+            cv::RotatedRect rect = cv::minAreaRect(points_2d);
+            //사각형 생성.
+
+            //중심점점
+            float center_x = rect.center.x;
+            float center_y = rect.center.y;
+            float center_z = (min_z + max_z) / 2.0f; 
+
+            float size_x = rect.size.width;
+            float size_y = rect.size.height;
             float size_z = max_z - min_z;
-            //군집의 size 계산
-            //size 계산해서 너무 작거나 크면 무시
+            
+            float angle_deg = rect.angle;
+            //x축(수평선) 기준으로 얼마나 기울어져있는지
 
-            if (size_y < 0.3f || size_y > 1.5f || size_z > 2.0f)
-            //너무 thin 하거나 너무 fat 하거나 너무 높으면
-            {
-                cluster_id++;
-                continue;//다음
+            // 변을 무조건 차의 '옆면(Heading)'으로 잡기
+            // 이유: 보통 차는 폭(1.8m)보다 길이(4.5m)가 깁니다.
+            if (size_x < size_y) {
+                std::swap(size_x, size_y);
+                angle_deg += 90.0f;
+            }
+            /*
+            기본, ros에서는 자동차의 x축 방향이 무조건 차의 긴쪽 길이어야 한다네요.
+            근데 내 생각에는 lidar 찍으면 L자에서 y축이 무조건 더 길테니까 swap을 해주는것 같아요.
+            각도도 수정해주고,
+            */
+
+            
+            // [보정 2] 예외 처리: "앞차 뒷모습 (Rear View)" 문제 해결
+            // 상황: 내 차선 앞차가 뒷범퍼만 보여서 가로로 납작한 'ㅡ'자 모양임.
+            // 특징: 긴 변(size_x)이 차폭(약 1.8m)이고, 짧은 변(size_y)이 아주 얇음(0.2m 등).
+            // 조치: 이때는 긴 변이 '옆면'이 아니라 '뒷면'이므로 다시 90도 돌려야 함.
+            
+            // 조건: "긴 변이 1.5m 넘는데(차폭), 짧은 변이 1.0m도 안 된다(차길이라기엔 너무 짧음)"
+            if (size_x > 1.5f && size_y < 1.0f) {
+                 // 다시 90도 회전 (원상 복구 -> 짧은 쪽을 진행 방향으로)
+                 std::swap(size_x, size_y);
+                 angle_deg += 90.0f;
             }
 
+            float yaw = angle_deg * M_PI / 180.0f; 
+            //각도를 radian으로 바꿈. radian = degree * 파이 / 180
+
+            Eigen::Quaternionf q;
+            q = Eigen::AngleAxisf(yaw, Eigen::Vector3f::UnitZ());
+            //AngleAxisf는 yaw만큼 돌리라는 거임. Eigen::Vector3f::UnitZ()를
+            //UnitZ()는 0,0,1로 z축으로 위로 쏫은 꼬챙이 느낌?
+
+            // 주의: 위에서 swap을 했기 때문에 size_x가 항상 긴 변이 아닐 수 있음.
+            // 따라서 면적이나 단순 크기로 필터링해야 안전함.
+            
+            if (size_x * size_y < 0.05f) continue; // 너무 작은 점(노이즈) 무시
+            if (size_z > 3.5f) continue; // 너무 높은 건(표지판 등) 무시
+
+            // [Step 6] Detection Message 생성
             vision_msgs::Detection3D detection;
             detection.header = detection_array.header;
-
-            // 위치: PCA로 구한 무게중심(Centroid) 사용
-            detection.bbox.center.position.x = centroid[0];
-            detection.bbox.center.position.y = centroid[1];
-            detection.bbox.center.position.z = centroid[2];
-
-            // 회전: PCA로 구한 Quaternion 사용
+            detection.bbox.center.position.x = center_x;
+            detection.bbox.center.position.y = center_y;
+            detection.bbox.center.position.z = center_z;
             detection.bbox.center.orientation.x = q.x();
             detection.bbox.center.orientation.y = q.y();
             detection.bbox.center.orientation.z = q.z();
             detection.bbox.center.orientation.w = q.w();
-
-            // 크기: 정밀 계산한 Size 사용
             detection.bbox.size.x = size_x;
             detection.bbox.size.y = size_y;
             detection.bbox.size.z = size_z;
 
-            //물체 클래스와 신뢰도 점수 설정
+            // 가설(Hypothesis) 추가 - 여기서는 일단 'Object'로 통일
             vision_msgs::ObjectHypothesisWithPose hypothesis;
-            //이 물체가 뭔지 추측할 객체 생성
-            hypothesis.id = 0;//점 밖에 없으니까 0으로 설정
-            hypothesis.score = 1.0;//신뢰도 100% 설정. 라이다에 부딪힌 점들이니까 무조건 100프로 신뢰하는것.
-            detection.results.push_back(hypothesis);//이 추측은 detection results에 추가
+            hypothesis.id = 0; 
+            hypothesis.score = 1.0; 
+            detection.results.push_back(hypothesis);
 
             detection_array.detections.push_back(detection);
-            //여태까지 만든 detection 객체를 detection_array에 추가
+
+            // [Step 7] RViz Marker 생성 (초록색 박스)
+            visualization_msgs::Marker marker;
+            marker.header = msg->header;
+            marker.ns = "pca_box";
+            marker.id = cluster_id;
+            marker.type = visualization_msgs::Marker::CUBE;
+            marker.action = visualization_msgs::Marker::ADD;
+            marker.pose = detection.bbox.center;
+            marker.scale = detection.bbox.size;
+            marker.color.r = 0.0f; marker.color.g = 1.0f; marker.color.b = 0.0f; // 초록색 박스
+            marker.color.a = 0.5f;
+            marker.lifetime = ros::Duration(0.1);
+            marker_array.markers.push_back(marker);
 
             cluster_id++;
         }
