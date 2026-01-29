@@ -46,6 +46,7 @@ catkin_package(
   DEPENDS
     PCL
     OpenCV
+    # [★수정됨] 여기서 Eigen3를 지웠습니다! (빌드 경고 해결)
 )
 
 ###########
@@ -69,6 +70,8 @@ add_dependencies(gigacha_lidar_clustering
 )
 
 ## 2. Tracking Node
+# [★주의] 본인 파일명이 tracking.cpp 인지 tracking2.cpp 인지 확인하고 아래 줄을 맞추세요!
+# 현재는 tracking2.cpp 로 되어 있습니다.
 add_executable(gigacha_lidar_tracking
   src/tracking2.cpp
 )
