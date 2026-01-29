@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(lidar_ohyejun)
 
-## Compile as C++11, supported in ROS Kinetic and newer
-add_compile_options(-std=c++11)
+## [권장] Eigen과 최신 라이브러리 호환을 위해 C++14 권장 (C++11도 되긴 함)
+add_compile_options(-std=c++14)
 
 ## Find catkin macros and libraries
 find_package(catkin REQUIRED COMPONENTS
@@ -12,21 +12,22 @@ find_package(catkin REQUIRED COMPONENTS
   vision_msgs
   pcl_ros
   pcl_conversions
+  # [★추가됨 1] 내 차 속도(Odometry)와 시각화(Marker)를 위해 필수
+  nav_msgs
+  visualization_msgs
 )
 
-## System dependencies are found with CMake's conventions
+## System dependencies
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
-# [★추가됨 1] OpenCV 패키지 찾기
 find_package(OpenCV REQUIRED)
 
 ## Specify additional locations of header files
 include_directories(
   include
   ${catkin_INCLUDE_DIRS}
-  ${EIGEN3_INCLUDE_DIR}
+  ${Eigen3_INCLUDE_DIRS}  # [수정] 대소문자 주의 (보통 Eigen3_INCLUDE_DIRS 사용)
   ${PCL_INCLUDE_DIRS}
-  # [★추가됨 2] OpenCV 헤더 경로 포함
   ${OpenCV_INCLUDE_DIRS}
 )
 
@@ -41,10 +42,12 @@ catkin_package(
     vision_msgs
     pcl_ros
     pcl_conversions
+    # [★추가됨 2] 다른 패키지에서 참조할 때 필요
+    nav_msgs
+    visualization_msgs
   DEPENDS
     Eigen3
     PCL
-    # [★추가됨 3] 패키지 의존성에 OpenCV 추가 (선택사항이나 권장)
     OpenCV
 )
 
@@ -52,39 +55,36 @@ catkin_package(
 ## Build ##
 ###########
 
-## Declare a C++ executable (Clustering)
+## 1. Clustering Node
 add_executable(gigacha_lidar_clustering
   src/lidar.cpp
 )
 
-## Specify libraries to link a library or executable target against
 target_link_libraries(gigacha_lidar_clustering
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
-  # [★추가됨 4] 클러스터링 노드에 OpenCV 라이브러리 링크 (필수!)
   ${OpenCV_LIBRARIES}
 )
 
-## Add cmake target dependencies of the executable
 add_dependencies(gigacha_lidar_clustering
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
   ${catkin_EXPORTED_TARGETS}
 )
 
-## Declare a C++ executable for tracking
+## 2. Tracking Node (EKF)
+# [주의] 파일명이 src/tracking.cpp 인지 src/tracking2.cpp 인지 꼭 확인하세요!
 add_executable(gigacha_lidar_tracking
   src/tracking2.cpp
 )
 
-## Specify libraries to link a library or executable target against
 target_link_libraries(gigacha_lidar_tracking
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
-  # [선택] 트래킹 쪽도 나중에 OpenCV 쓸 수 있으니 미리 넣어두면 좋음
   ${OpenCV_LIBRARIES}
+  # Eigen은 보통 헤더 온리라 링크 안 해도 되지만, 문제 생기면 아래 주석 해제
+  # ${Eigen3_LIBRARIES} 
 )
 
-## Add cmake target dependencies of the executable
 add_dependencies(gigacha_lidar_tracking
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
   ${catkin_EXPORTED_TARGETS}
@@ -94,7 +94,6 @@ add_dependencies(gigacha_lidar_tracking
 ## Install ##
 #############
 
-# Mark executables and/or libraries for installation
 install(TARGETS
   gigacha_lidar_clustering
   gigacha_lidar_tracking
