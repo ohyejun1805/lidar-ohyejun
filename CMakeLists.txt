@@ -46,14 +46,15 @@ catkin_package(
   DEPENDS
     PCL
     OpenCV
-    # [★수정됨] 여기서 Eigen3를 지웠습니다! (빌드 경고 해결)
 )
 
 ###########
 ## Build ##
 ###########
 
-## 1. Clustering Node
+## ===============================================
+## 1. Clustering Node (기존 유지)
+## ===============================================
 add_executable(gigacha_lidar_clustering
   src/lidar.cpp
 )
@@ -69,9 +70,9 @@ add_dependencies(gigacha_lidar_clustering
   ${catkin_EXPORTED_TARGETS}
 )
 
-## 2. Tracking Node
-# [★주의] 본인 파일명이 tracking.cpp 인지 tracking2.cpp 인지 확인하고 아래 줄을 맞추세요!
-# 현재는 tracking2.cpp 로 되어 있습니다.
+## ===============================================
+## 2. Tracking Node (기존 유지)
+## ===============================================
 add_executable(gigacha_lidar_tracking
   src/tracking2.cpp
 )
@@ -87,6 +88,26 @@ add_dependencies(gigacha_lidar_tracking
   ${catkin_EXPORTED_TARGETS}
 )
 
+## ===============================================
+## 3. Cone Mission Node (★ 여기만 새로 추가됨!)
+## ===============================================
+# 주의: src 폴더 안의 파일명이 lidar_cone.cpp 인지 lidar_corn.cpp 인지 꼭 확인하세요!
+# 저는 lidar_cone.cpp (콘)으로 적어두었습니다.
+add_executable(gigacha_lidar_cone
+  src/lidar_cone.cpp
+)
+
+target_link_libraries(gigacha_lidar_cone
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
+add_dependencies(gigacha_lidar_cone
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+)
+
 #############
 ## Install ##
 #############
@@ -94,6 +115,7 @@ add_dependencies(gigacha_lidar_tracking
 install(TARGETS
   gigacha_lidar_clustering
   gigacha_lidar_tracking
+  gigacha_lidar_cone      # [★추가됨] 설치 목록에도 추가
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
