@@ -178,10 +178,10 @@ public:
         nh_.param<float>("roi_min_y", roi_min_y_, -5.0f);
         nh_.param<float>("roi_max_y", roi_max_y_, 5.0f);
         nh_.param<float>("roi_min_z", roi_min_z_, -5.0f); 
-        nh_.param<float>("roi_max_z", roi_max_z_, 0.3f);
+        nh_.param<float>("roi_max_z", roi_max_z_, 20.0f);
         
         nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.55f);
-        nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
+        nh_.param<int>("min_cluster_size", min_cluster_size_, 3);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 5000);
 
         nh_.param<bool>("publish_origin", publish_origin_, true);
@@ -228,7 +228,7 @@ public:
         // 3. Ground Removal (RANSAC)
         pcl::PointCloud<PointT>::Ptr cloud_obstacles_total(new pcl::PointCloud<PointT>);
         float zone_limits[4] = {roi_min_x_, 10.0f, 25.0f, roi_max_x_};
-        float zone_thresholds[3] = {0.15f, 0.25f, 0.35f};
+        float zone_thresholds[3] = {0.15f, 0.20f, 0.25f};
 
         for(int i = 0; i < 3; i++) 
         {
@@ -266,25 +266,12 @@ public:
             *cloud_obstacles_total += *cloud_zone_obstacle;
         }
 
+        sensor_msgs::PointCloud2 out_obs;
+        pcl::toROSMsg(*cloud_obstacles_total, out_obs); 
+        out_obs.header = msg->header;
+        cloud_ground_removed_pub_.publish(out_obs);
+
         if (cloud_obstacles_total->empty()) return;
-
-        // ROI Slicing: 바닥에서 30cm 위(-1.5m) 이상만 트래킹
-        pcl::PointCloud<PointT>::Ptr cloud_tracking_input(new pcl::PointCloud<PointT>);
-        for (const auto& p : cloud_obstacles_total->points) 
-        {
-            if (p.z > -1.5f)
-            { 
-                cloud_tracking_input->push_back(p);
-            }
-        }
-
-        if (cloud_tracking_input->empty()) {
-            sensor_msgs::PointCloud2 out;
-            pcl::toROSMsg(*cloud_obstacles_total, out); 
-            out.header = msg->header;
-            cloud_ground_removed_pub_.publish(out);
-            return;
-        }
 
         // Clustering (Z축 제거 후 2D로 수행)
         pcl::PointCloud<PointT>::Ptr cloud_2d(new pcl::PointCloud<PointT>);
@@ -340,8 +327,6 @@ public:
             // 기본 노이즈 제거
             if (max_side < 0.2f) continue;   // 20cm 미만
             if (max_side > 20.0f) continue;  // 20m 초과
-            if (area < 0.05f) continue;      // 면적 미달
-            if (box.hgt > 4.5f) continue;    // 너무 높음
 
             //조건
             
@@ -406,7 +391,7 @@ public:
             marker.pose = detection.bbox.center;
             marker.pose.orientation = detection.bbox.center.orientation;
             marker.scale = detection.bbox.size;
-            marker.color.r = 0.0f; marker.color.g = 1.0f; marker.color.b = 0.0f; 
+            marker.color.r = 0.0f; marker.color.g = 0.0f; marker.color.b = 1.0f; 
             marker.color.a = 0.5f;
             marker.lifetime = ros::Duration(0.1);
             marker_array.markers.push_back(marker);
