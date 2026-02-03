@@ -275,7 +275,7 @@ public:
 
         // Clustering (Z축 제거 후 2D로 수행)
         pcl::PointCloud<PointT>::Ptr cloud_2d(new pcl::PointCloud<PointT>);
-        pcl::copyPointCloud(*cloud_tracking_input, *cloud_2d);
+        pcl::copyPointCloud(*cloud_obstacles_total, *cloud_2d);
         for (auto& p : cloud_2d->points) { p.z = 0.0f; } // z축 제거
 
         pcl::search::KdTree<PointT>::Ptr tree(new pcl::search::KdTree<PointT>);
@@ -310,7 +310,7 @@ public:
             
             for (const auto &idx : indices.indices)
             {
-                PointT p = cloud_tracking_input->points[idx];
+                PointT p = cloud_obstacles_total->points[idx];
                 p.intensity = static_cast<float>(cluster_id % 100); 
                 cluster->points.push_back(p);
                 cloud_clustered->points.push_back(p);
