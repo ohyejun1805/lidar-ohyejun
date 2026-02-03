@@ -173,12 +173,12 @@ public:
         ROS_INFO("GIGACHA LiDAR Clustering (Autoware L-Shape) Starting...");
         
         nh_.param<float>("voxel_size", voxel_size_, 0.12f);
-        nh_.param<float>("roi_min_x", roi_min_x_, -10.0f);
+        nh_.param<float>("roi_min_x", roi_min_x_, -20.0f);
         nh_.param<float>("roi_max_x", roi_max_x_, 30.0f);
-        nh_.param<float>("roi_min_y", roi_min_y_, -5.0f);
-        nh_.param<float>("roi_max_y", roi_max_y_, 5.0f);
+        nh_.param<float>("roi_min_y", roi_min_y_, -10.0f);
+        nh_.param<float>("roi_max_y", roi_max_y_, 10.0f);
         nh_.param<float>("roi_min_z", roi_min_z_, -5.0f); 
-        nh_.param<float>("roi_max_z", roi_max_z_, 20.0f);
+        nh_.param<float>("roi_max_z", roi_max_z_, 2.0f);
         
         nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.55f);
         nh_.param<int>("min_cluster_size", min_cluster_size_, 3);
@@ -306,7 +306,7 @@ public:
         {
             pcl::PointCloud<PointT>::Ptr cluster(new pcl::PointCloud<PointT>);
 
-            if (indices.indices.size() < 10) continue; // 점 너무 적으면 무시
+            if (indices.indices.size() < 5) continue; // 점 너무 적으면 무시
             
             for (const auto &idx : indices.indices)
             {
@@ -319,10 +319,14 @@ public:
             // Autoware L-Shape Fitting 호출
             BoxInfo box = fitLShape(cluster);
 
+            if(box.hgt < 0.5f)
+            {
+                continue;
+            }
+
             // 사람 + 차 + 버스 필터링 
             float min_side = std::min(box.len, box.wid); // 폭
             float max_side = std::max(box.len, box.wid); // 길이
-            float area = box.len * box.wid;
 
             // 기본 노이즈 제거
             if (max_side < 0.2f) continue;   // 20cm 미만
@@ -331,16 +335,20 @@ public:
             //조건
             
             // [사람] 
-            bool is_normal_person = (min_side >= 0.2f && min_side < 1.0f) && 
-                             (max_side >= 0.2f && max_side < 1.2f);
+            bool is_normal_person = (min_side >= 0.1f && min_side < 1.0f) && 
+                             (max_side >= 0.1f && max_side < 1.2f);
 
             bool is_wide_person = (max_side >= 1.2f && max_side < 2.0f)&&(min_side <0.6f);
 
             bool is_person = is_normal_person || is_wide_person;
 
             // [승용차] 폭 1.0~2.5m, 길이 2.0~6.0m
-            bool is_car = (min_side >= 1.0f && min_side < 2.5f) && 
+            bool is_normal_car = (min_side >= 1.0f && min_side < 2.5f) && 
                           (max_side >= 2.0f && max_side < 6.0f);
+            bool is_partial_car = (min_side >= 1.0f && min_side <2.5f) && 
+                          (max_side >= 0.3f && max_side < 2.0f);
+
+            bool is_car = is_normal_car || is_partial_car;
 
             // [폭 2.0~3.5m, 길이 5.5~19.0m
             bool is_large = (min_side >= 2.0f && min_side < 3.5f) && 
@@ -352,7 +360,8 @@ public:
             bool is_bus = is_large && is_on_road;
 
             // 최종 판정: 셋 중 하나라도 아니면 삭제
-            if (!is_person && !is_car && !is_bus) {
+            if (!is_person && !is_car && !is_bus) 
+            {
                 continue; 
             }
 
@@ -381,18 +390,17 @@ public:
             detection.results.push_back(hypothesis);
             detection_array.detections.push_back(detection);
 
-            // 마커 생성
+            // 마커 생성 (텍스트 없음, 큐브만 생성)
             visualization_msgs::Marker marker;
             marker.header = msg->header;
-            marker.ns = "cluster_box";
+            marker.ns = "bbox"; // 네임스페이스 변경 (잔상 방지용)
             marker.id = cluster_id;
             marker.type = visualization_msgs::Marker::CUBE;
             marker.action = visualization_msgs::Marker::ADD;
             marker.pose = detection.bbox.center;
             marker.pose.orientation = detection.bbox.center.orientation;
             marker.scale = detection.bbox.size;
-            marker.color.r = 0.0f; marker.color.g = 0.0f; marker.color.b = 1.0f; 
-            marker.color.a = 0.5f;
+            marker.color.r = 0.0f; marker.color.g = 0.0f; marker.color.b = 1.0f; marker.color.a = 0.5f;
             marker.lifetime = ros::Duration(0.1);
             marker_array.markers.push_back(marker);
 
@@ -418,12 +426,7 @@ public:
             out.header = msg->header;
             cloud_crop_pub_.publish(out);
         }
-
-        sensor_msgs::PointCloud2 out_obs;
-        pcl::toROSMsg(*cloud_obstacles_total, out_obs); 
-        out_obs.header = msg->header;
-        cloud_ground_removed_pub_.publish(out_obs);
-
+        
         if (publish_clustered_) {
             sensor_msgs::PointCloud2 out;
             pcl::toROSMsg(*cloud_clustered, out);
