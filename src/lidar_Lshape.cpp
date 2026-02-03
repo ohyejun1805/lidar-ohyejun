@@ -55,9 +55,23 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
 
     // 2D XY 평면 점들 수집
     std::vector<Eigen::Vector2f> points_2d;
+    float cut_height_threshold = min_pt.z + 0.3f;
+
     for (const auto& p : cluster->points) 
     {
-        points_2d.push_back(Eigen::Vector2f(p.x, p.y));
+        if(p.z > cut_height_threshold)
+        {
+            points_2d.push_back(Eigen::Vector2f(p.x, p.y));
+        }
+    }
+
+    if(points_2d.size() < 3)
+    {
+        points_2d.clear();
+        for(const auto& p : cluster->points) 
+        {
+            points_2d.push_back(Eigen::Vector2f(p.x, p.y));
+        }
     }
 
     // 변수 초기화
