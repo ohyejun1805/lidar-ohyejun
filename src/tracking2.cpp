@@ -396,45 +396,83 @@ private:
         
         marker_pub_.publish(marker_array);
     }
-    // --------------------------------------------------------------------------------
-    // [수정됨] 트랙 업데이트 (Yaw 반영 & 정지 물체 필터링)
-    // --------------------------------------------------------------------------------
+
+    //updateTrack 함수 (헤딩 보정, 정지 물체)
     void updateTrack(Track& track, const vision_msgs::Detection3D& detection, double dt)
     {
         geometry_msgs::Point measurement_pos = getCenter(detection);
         
-        // [1] Yaw 추출 (Quaternion -> Yaw)
+        // [1] 측정 Yaw 추출
         double measurement_yaw = getYawFromQuaternion(detection.bbox.center.orientation);
 
+        // 속도 기반 보정
+        // L-Shape는 앞뒤(180도)와 가로세로(90도)를 헷갈려함.
+        // 차가 움직이고 있다면 "이동 방향"으로 각도를 강제 정렬합니다.
+        
+        // 현재 트랙의 추정 속도
+        double track_v = track.kf.state_(3);
+        double track_yaw = track.kf.state_(4);
+
+        // 속도가 어느 정도 붙었을 때만 보정
+        // 정지 상태일 때는 방향을 알 수 없으므로 보정하지 않음
+        if (std::abs(track_v) > 0.5) 
+        {
+            // 칼만 필터가 추정 중인 이동 방향 각도
+            double vel_angle = track_yaw; 
+            
+            double diff = measurement_yaw - vel_angle;
+            
+            // 각도 정규화 (-PI ~ PI)
+            while (diff > M_PI) diff -= 2.0 * M_PI;
+            while (diff < -M_PI) diff += 2.0 * M_PI;
+
+            double abs_diff = std::abs(diff);
+
+            // 180도 뒤집히면 차는 앞으로 가는데 박스는 뒤를 보고 있음
+            if (abs_diff > (M_PI * 0.75)) { // 약 135도 이상 차이
+                 measurement_yaw += M_PI;
+            }
+            // 90도 돌아감
+            // 차는 앞으로 가는데 박스는 옆을 보고 있음 (주로 뒷모습만 보일 때 발생)
+            else if (abs_diff > (M_PI * 0.25) && abs_diff < (M_PI * 0.75)) // 45도 ~ 135도 사이
+            { 
+                 //도형 모양보다는 이동 방향이 맞다라고 판단하고 강제 동기화
+                 measurement_yaw = vel_angle; 
+            }
+            
+            // 다시 정규화
+            while (measurement_yaw > M_PI) measurement_yaw -= 2.0 * M_PI;
+            while (measurement_yaw < -M_PI) measurement_yaw += 2.0 * M_PI;
+        }
+
+        // Yaw Rate 계산 (초기화 단계 보정)
         if (track.age < 3) 
         {
-            double last_yaw = track.kf.state_(4);       // 직전 Yaw
-            double diff_yaw = measurement_yaw - last_yaw; // 각도 변화량
+            double last_yaw = track.kf.state_(4);
+            double diff_yaw = measurement_yaw - last_yaw;
 
-            // 각도 정규화 (-PI ~ PI) - 필수!
             while (diff_yaw > M_PI) diff_yaw -= 2.0 * M_PI;
             while (diff_yaw < -M_PI) diff_yaw += 2.0 * M_PI;
 
-            // 시간으로 나눠서 각속도 계산 후 강제 주입
-            double instant_yaw_rate = diff_yaw / dt;
-            track.kf.state_(5) = instant_yaw_rate; 
+            track.kf.state_(5) = diff_yaw / dt; 
         }
 
-        // [2] EKF 예측 & 업데이트
+        // EKF 업데이트
         track.kf.predict(dt);
         track.kf.update(measurement_pos, measurement_yaw);
 
-        // [3] ★ 정지 물체 필터링 (Ego-Motion Compensation)
-        // 절대 속도 = (물체 상대 속도 * cos(물체 헤딩)) + 내 차 속도
-        // (X축 방향만 고려한 약식 계산)
-        double obj_rel_v = track.kf.state_(3); // EKF가 추정한 상대 속도
+        // 정지 물체 필터링
+        // 절대 속도 = 상대 속도 + 내 차 속도
+        double obj_rel_v = track.kf.state_(3); 
+        // EKF state_(3)은 속력(scalar)이지만, 방향은 state_(4)를 따름.
+        // X축 성분만 근사 계산:
         double obj_vx = obj_rel_v * cos(track.kf.state_(4)); 
-        double abs_vx = obj_vx + my_car_velocity_; // 절대 속도
+        double abs_vx = obj_vx + my_car_velocity_; 
 
-        // 절대 속도가 3.6km/h (1.0m/s) 미만이면 정지로 간주
+        // 절대 속도가 1.8km/h (0.5m/s) 미만이면 정지로 간주
         if (std::abs(abs_vx) < 0.5) 
         {
-            track.kf.setVelocityZero(); // 속도를 0으로 죽임 (Ghost Effect 방지)
+            track.kf.setVelocityZero(); 
         }
 
         track.detection = detection;
