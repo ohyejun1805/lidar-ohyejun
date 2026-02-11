@@ -29,7 +29,7 @@
 #include <Eigen/Dense>
 
 // 지면제거 patchwork
-#include <patchworkpp/patchworkpp.h
+#include <patchworkpp/patchworkpp.h>
 
 using PointT = pcl::PointXYZI;
 
@@ -318,7 +318,7 @@ public:
         
         visualization_msgs::MarkerArray marker_array; 
         pcl::PointCloud<PointT>::Ptr cloud_clustered(new pcl::PointCloud<PointT>);
-        
+
         // [수정] 헤더 할당 시 PCL 변환 함수 사용 (에러 해결)
         pcl_conversions::toPCL(msg->header, cloud_clustered->header);
 
