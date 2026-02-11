@@ -23,6 +23,7 @@
   <depend>libopencv-dev</depend>
 
   <depend>patchworkpp</depend>
+  <depend>jsk_recognition_msgs</depend>
 
   <export>
   </export>
