@@ -33,8 +33,6 @@
 
 using PointT = pcl::PointXYZI;
 
-// [수정 1] using namespace 제거 (PatchWorkpp는 클래스라 네임스페이스로 못 씀)
-
 struct BoxInfo {
     float x, y, z;       
     float len, wid, hgt; 
@@ -146,7 +144,7 @@ private:
     ros::Publisher bbox_pub_;                 
     ros::Publisher marker_pub_;               
 
-    // [수정] PatchWorkpp<PointT> 타입 사용
+    // [핵심] 템플릿 클래스 선언
     boost::shared_ptr<PatchWorkpp<PointT>> patchwork_ptr_; 
 
     float voxel_size_;
@@ -157,17 +155,6 @@ private:
     float cluster_tolerance_;
     int min_cluster_size_;
     int max_cluster_size_;
-
-    float sensor_height_;
-    int num_iter_;
-    int num_lpr_;
-    int num_min_pts_;
-    float th_seeds_;
-    float th_dist_;
-    float max_r_;
-    float min_r_;
-    float uprightness_th_;
-    bool verbose_;
 
 public:
     GigachaLidarClustering() : nh_("~")
@@ -186,33 +173,21 @@ public:
         nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 4000);
 
-        nh_.param<float>("sensor_height", sensor_height_, 1.55f); 
-        
-        nh_.param<int>("num_iter", num_iter_, 3);
-        nh_.param<int>("num_lpr", num_lpr_, 20);
-        nh_.param<int>("num_min_pts", num_min_pts_, 10);
-        nh_.param<float>("th_seeds", th_seeds_, 0.4f);
-        nh_.param<float>("th_dist", th_dist_, 0.3f);
-        nh_.param<float>("max_r", max_r_, 80.0f);
-        nh_.param<float>("min_r", min_r_, 2.7f); 
-        nh_.param<float>("uprightness_th", uprightness_th_, 0.707f); 
-        nh_.param<bool>("verbose", verbose_, false);
+        // [중요] Patchwork++ 파라미터 강제 설정
+        // 이 버전은 nh_.param()으로 값을 가져오므로, 미리 설정해두어야 합니다.
+        nh_.setParam("sensor_height", 1.55);   // <-- 센서 높이 1.55m
+        nh_.setParam("verbose", false);
+        nh_.setParam("num_iter", 3);
+        nh_.setParam("num_lpr", 20);
+        nh_.setParam("num_min_pts", 10);
+        nh_.setParam("th_seeds", 0.4);
+        nh_.setParam("th_dist", 0.3);
+        nh_.setParam("max_r", 80.0);
+        nh_.setParam("min_r", 2.7);
+        nh_.setParam("uprightness_thr", 0.707);
 
-        // [수정 2] Parameters의 정확한 소속 명시 (PatchWorkpp<PointT>::Parameters)
-        PatchWorkpp<PointT>::Parameters params;
-        params.verbose = verbose_;
-        params.sensor_height = sensor_height_;
-        params.num_iter = num_iter_;
-        params.num_lpr = num_lpr_;
-        params.num_min_pts = num_min_pts_;
-        params.th_seeds = th_seeds_;
-        params.th_dist = th_dist_;
-        params.max_r = max_r_;
-        params.min_r = min_r_;
-        params.uprightness_th = uprightness_th_;
-
-        // 객체 생성
-        patchwork_ptr_.reset(new PatchWorkpp<PointT>(params));
+        // [핵심 해결] Parameters 구조체 대신 NodeHandle 포인터를 전달!
+        patchwork_ptr_.reset(new PatchWorkpp<PointT>(&nh_));
 
         cloud_origin_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_origin", 1);
         cloud_ground_removed_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_ground_removed", 1);
@@ -235,8 +210,8 @@ public:
         // --- Step 1: Patchwork++ Ground Removal ---
         pcl::PointCloud<PointT> cloud_ground, cloud_nonground;
         
-        // [수정 3] 4번째 인자(time_taken) 추가!
-        double time_taken; 
+        // [핵심] 4번째 인자(time_taken) 포함해서 호출
+        double time_taken;
         patchwork_ptr_->estimate_ground(*cloud_origin, cloud_ground, cloud_nonground, time_taken);
 
         pcl::PointCloud<PointT>::Ptr cloud_obstacles(new pcl::PointCloud<PointT>);
