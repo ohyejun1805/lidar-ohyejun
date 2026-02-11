@@ -28,63 +28,53 @@
 // Eigen
 #include <Eigen/Dense>
 
-// 지면제거 patchwork
-#include <patchworkpp/patchworkpp.h>
+// [Patchwork++] 헤더
+#include <patchworkpp/patchworkpp.hpp> 
 
 using PointT = pcl::PointXYZI;
 
-// 박스 정보를 담을 구조체
+// [수정 1] using namespace 제거 (PatchWorkpp는 클래스라 네임스페이스로 못 씀)
+
 struct BoxInfo {
-    float x, y, z;       // 중심 좌표
-    float len, wid, hgt; // 크기 (Length, Width, Height)
-    float yaw;           // 회전 각도
+    float x, y, z;       
+    float len, wid, hgt; 
+    float yaw;           
 };
 
 // Autoware 스타일 Search-Based L-Shape Fitting
 BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
 {
     BoxInfo box;
-    //z축 미리 계산, 회전과 무관하므로 미리 계산
     PointT min_pt, max_pt;
     pcl::getMinMax3D(*cluster, min_pt, max_pt);
-    //cluster 안의 x,y,z 최소값과 최대값 계산
 
     box.z = (min_pt.z + max_pt.z) / 2.0f;
     box.hgt = max_pt.z - min_pt.z;
-    //박스 중심 높이와 그냥 높이 계산
 
-    // 2D XY 평면 점들 수집
     std::vector<Eigen::Vector2f> points_2d;
-    float cut_height_threshold = min_pt.z + 0.3f;
+    float cut_height_threshold = min_pt.z + 0.3f; 
 
     for (const auto& p : cluster->points) 
     {
         if(p.z > cut_height_threshold)
-        {
             points_2d.push_back(Eigen::Vector2f(p.x, p.y));
-        }
     }
 
     if(points_2d.size() < 3)
     {
         points_2d.clear();
         for(const auto& p : cluster->points) 
-        {
             points_2d.push_back(Eigen::Vector2f(p.x, p.y));
-        }
     }
 
-    // 변수 초기화
     float min_area = std::numeric_limits<float>::max();
     float best_angle = 0.0f;
     float best_min_x = 0.0f, best_max_x = 0.0f;
     float best_min_y = 0.0f, best_max_y = 0.0f;
 
-    // 각도 정밀 탐색 (0도 ~ 90도)
-    // Autoware는 보통 최적화 기법을 쓰지만, Search-Based가 가장 직관적이고 강력함
-    for (int angle_step = 0; angle_step < 90; angle_step++) // 1도 간격
+    for (int angle_step = 0; angle_step < 90; angle_step++) 
     {
-        float theta = angle_step * (M_PI / 180.0f); //라디안 변환
+        float theta = angle_step * (M_PI / 180.0f);
         float cos_t = std::cos(theta);
         float sin_t = std::sin(theta);
 
@@ -93,10 +83,8 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
         float current_min_y = std::numeric_limits<float>::max();
         float current_max_y = std::numeric_limits<float>::lowest();
 
-        // 모든 점 회전 변환
         for (const auto& p : points_2d) 
         {
-            // 회전 공식: x' = x*cos + y*sin, y' = -x*sin + y*cos
             float rx = p.x() * cos_t + p.y() * sin_t;
             float ry = -p.x() * sin_t + p.y() * cos_t;
 
@@ -110,7 +98,6 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
         float depth = current_max_y - current_min_y;
         float area = width * depth;
 
-        // 면적이 더 작으면 갱신 (더 타이트한 박스)
         if (area < min_area) 
         {
             min_area = area;
@@ -122,29 +109,22 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
         }
     }
 
-    // 최적 박스 복원
-    // 회전된 좌표계에서의 중심
     float cx_rot = (best_min_x + best_max_x) / 2.0f;
     float cy_rot = (best_min_y + best_max_y) / 2.0f;
     
-    // 원래 좌표계로 역회전
     float cos_best = std::cos(best_angle);
     float sin_best = std::sin(best_angle);
 
     box.x = cx_rot * cos_best - cy_rot * sin_best;
     box.y = cx_rot * sin_best + cy_rot * cos_best;
-    //원점 기준으로 세타만큼 회전해서 원래 좌표계로 역회전
     
-    // 크기 설정
     float dim_x = best_max_x - best_min_x;
     float dim_y = best_max_y - best_min_y;
 
-    // Heading 정리 (긴 변을 차량의 앞뒤로 가정)
-    //그러면 내 차선 앞에 있는 차량은? 그건 tracking에서 속도 방향으로 보정.
     if (dim_x < dim_y) 
     {
         std::swap(dim_x, dim_y);
-        best_angle += (M_PI / 2.0f); // 90도 회전
+        best_angle += (M_PI / 2.0f); 
     }
 
     box.len = dim_x;
@@ -160,24 +140,24 @@ private:
     ros::NodeHandle nh_;
     ros::Subscriber lidar_sub_;
     
-    ros::Publisher cloud_origin_pub_;
-    ros::Publisher cloud_ground_removed_pub_; // 지면 제거 결과
-    ros::Publisher cloud_cluster_pub_;        // 클러스터링 결과
-    ros::Publisher bbox_pub_;                 // 박스 결과
-    ros::Publisher marker_pub_;               // 시각화 마커
+    ros::Publisher cloud_origin_pub_;     
+    ros::Publisher cloud_ground_removed_pub_; 
+    ros::Publisher cloud_cluster_pub_;        
+    ros::Publisher bbox_pub_;                 
+    ros::Publisher marker_pub_;               
 
-    // Patchwork++ 객체
-    boost::shared_ptr<PatchWorkpp::PatchWorkpp> patchwork_ptr_;
+    // [수정] PatchWorkpp<PointT> 타입 사용
+    boost::shared_ptr<PatchWorkpp<PointT>> patchwork_ptr_; 
 
     float voxel_size_;
     float roi_min_x_, roi_max_x_;
     float roi_min_y_, roi_max_y_;
     float roi_min_z_, roi_max_z_;
+    
     float cluster_tolerance_;
     int min_cluster_size_;
     int max_cluster_size_;
 
-    // Patchwork++ 파라미터
     float sensor_height_;
     int num_iter_;
     int num_lpr_;
@@ -192,22 +172,20 @@ private:
 public:
     GigachaLidarClustering() : nh_("~")
     {
-        ROS_INFO("GIGACHA LiDAR Clustering (Autoware L-Shape) Starting...");
+        ROS_INFO("GIGACHA LiDAR Clustering (With Patchwork++) Init...");
         
-        nh_.param<float>("voxel_size", voxel_size_, 0.12f);
-        nh_.param<float>("roi_min_x", roi_min_x_, -20.0f);
-        nh_.param<float>("roi_max_x", roi_max_x_, 30.0f);
-        nh_.param<float>("roi_min_y", roi_min_y_, -10.0f);
-        nh_.param<float>("roi_max_y", roi_max_y_, 10.0f);
-        nh_.param<float>("roi_min_z", roi_min_z_, -5.0f); 
-        nh_.param<float>("roi_max_z", roi_max_z_, 2.0f);
+        nh_.param<float>("voxel_size", voxel_size_, 0.15f);
+        nh_.param<float>("roi_min_x", roi_min_x_, -30.0f);
+        nh_.param<float>("roi_max_x", roi_max_x_, 40.0f);
+        nh_.param<float>("roi_min_y", roi_min_y_, -12.0f);
+        nh_.param<float>("roi_max_y", roi_max_y_, 12.0f);
+        nh_.param<float>("roi_min_z", roi_min_z_, -2.5f); 
+        nh_.param<float>("roi_max_z", roi_max_z_, 2.5f);
         
-        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.55f);
-        nh_.param<int>("min_cluster_size", min_cluster_size_, 3);
-        nh_.param<int>("max_cluster_size", max_cluster_size_, 5000);
+        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.6f);
+        nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
+        nh_.param<int>("max_cluster_size", max_cluster_size_, 4000);
 
-        // 2. Patchwork++ 파라미터 로드
-        // [중요] sensor_height를 실제 차량 라이다 높이로 맞춰야 함!
         nh_.param<float>("sensor_height", sensor_height_, 1.55f); 
         
         nh_.param<int>("num_iter", num_iter_, 3);
@@ -216,12 +194,12 @@ public:
         nh_.param<float>("th_seeds", th_seeds_, 0.4f);
         nh_.param<float>("th_dist", th_dist_, 0.3f);
         nh_.param<float>("max_r", max_r_, 80.0f);
-        nh_.param<float>("min_r", min_r_, 2.7f); // 차량 본체 필터링용 (반경 2.7m 이내 무시)
+        nh_.param<float>("min_r", min_r_, 2.7f); 
         nh_.param<float>("uprightness_th", uprightness_th_, 0.707f); 
         nh_.param<bool>("verbose", verbose_, false);
 
-        // 3. Patchwork++ 객체 생성 및 초기화
-        PatchWorkpp::Parameters params;
+        // [수정 2] Parameters의 정확한 소속 명시 (PatchWorkpp<PointT>::Parameters)
+        PatchWorkpp<PointT>::Parameters params;
         params.verbose = verbose_;
         params.sensor_height = sensor_height_;
         params.num_iter = num_iter_;
@@ -233,16 +211,15 @@ public:
         params.min_r = min_r_;
         params.uprightness_th = uprightness_th_;
 
-        patchwork_ptr_.reset(new Patchworkpp::PatchWorkpp(params));
+        // 객체 생성
+        patchwork_ptr_.reset(new PatchWorkpp<PointT>(params));
 
-        // Publisher 설정 (cloud_origin_pub_ 복구)
         cloud_origin_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_origin", 1);
         cloud_ground_removed_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_ground_removed", 1);
         cloud_cluster_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_clustered", 1);
         bbox_pub_ = nh_.advertise<vision_msgs::Detection3DArray>("/gigacha/lidar/bounding_boxes", 1);
         marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/gigacha/lidar/markers", 1);
         
-        // 5. Subscriber 설정
         lidar_sub_ = nh_.subscribe("/lidar3D", 1, &GigachaLidarClustering::lidarCallback, this);
         
         ROS_INFO("Initialized Successfully.");
@@ -256,16 +233,15 @@ public:
         if (cloud_origin->empty()) return;
 
         // --- Step 1: Patchwork++ Ground Removal ---
-        // (원본 데이터에서 바로 지면 제거 수행)
         pcl::PointCloud<PointT> cloud_ground, cloud_nonground;
         
-        // estimateGround(입력, 지면출력, 비지면출력)
-        patchwork_ptr_->estimateGround(*cloud_origin, cloud_ground, cloud_nonground);
+        // [수정 3] 4번째 인자(time_taken) 추가!
+        double time_taken; 
+        patchwork_ptr_->estimate_ground(*cloud_origin, cloud_ground, cloud_nonground, time_taken);
 
         pcl::PointCloud<PointT>::Ptr cloud_obstacles(new pcl::PointCloud<PointT>);
-        *cloud_obstacles = cloud_nonground; // 지면이 제거된 포인트들
+        *cloud_obstacles = cloud_nonground; 
 
-        // 결과 확인용 Publish
         sensor_msgs::PointCloud2 out_obs;
         pcl::toROSMsg(*cloud_obstacles, out_obs); 
         out_obs.header = msg->header;
@@ -274,7 +250,6 @@ public:
         if (cloud_obstacles->empty()) return;
 
         // --- Step 2: ROI (Crop Box) ---
-        // 지면이 없어진 상태에서 관심 영역만 자름
         pcl::PointCloud<PointT>::Ptr cloud_crop(new pcl::PointCloud<PointT>);
         pcl::CropBox<PointT> crop_filter;
         crop_filter.setInputCloud(cloud_obstacles);
@@ -285,7 +260,6 @@ public:
         if (cloud_crop->empty()) return;
 
         // --- Step 3: Voxel Grid Downsampling ---
-        // 클러스터링 속도 향상을 위해 점 개수 줄임
         pcl::PointCloud<PointT>::Ptr cloud_final(new pcl::PointCloud<PointT>);
         pcl::VoxelGrid<PointT> voxel_filter;
         voxel_filter.setInputCloud(cloud_crop);
@@ -295,7 +269,6 @@ public:
         if (cloud_final->empty()) return;
 
         // --- Step 4: Clustering ---
-        // Z축 제거 후 2D로 투영하여 클러스터링 (더 정확함)
         pcl::PointCloud<PointT>::Ptr cloud_2d(new pcl::PointCloud<PointT>);
         pcl::copyPointCloud(*cloud_final, *cloud_2d);
         for (auto& p : cloud_2d->points) { p.z = 0.0f; } 
@@ -312,14 +285,12 @@ public:
         clustering.setSearchMethod(tree);
         clustering.extract(cluster_indices);
 
-        // 결과 담을 메시지 준비
         vision_msgs::Detection3DArray detection_array;
         detection_array.header = msg->header; 
         
         visualization_msgs::MarkerArray marker_array; 
         pcl::PointCloud<PointT>::Ptr cloud_clustered(new pcl::PointCloud<PointT>);
-
-        // [수정] 헤더 할당 시 PCL 변환 함수 사용 (에러 해결)
+        
         pcl_conversions::toPCL(msg->header, cloud_clustered->header);
 
         int cluster_id = 0;
@@ -329,7 +300,6 @@ public:
         {
             pcl::PointCloud<PointT>::Ptr cluster(new pcl::PointCloud<PointT>);
 
-            // 인덱스는 cloud_final 기준
             for (const auto &idx : indices.indices)
             {
                 PointT p = cloud_final->points[idx];
@@ -338,33 +308,23 @@ public:
                 cloud_clustered->points.push_back(p);
             }
             
-            // L-Shape Fitting
             BoxInfo box = fitLShape(cluster);
 
-            // [필터링 로직]
             float min_side = std::min(box.len, box.wid); 
             float max_side = std::max(box.len, box.wid); 
 
-            // 너무 작거나 너무 큰 노이즈 제거
             if (max_side < 0.2f) continue;  
             if (max_side > 20.0f) continue; 
-            if (box.hgt < 0.2f) continue; // 높이 낮은 물체 제거
+            if (box.hgt < 0.2f) continue; 
 
-            // 1. 사람 (작은 박스)
             bool is_person = (min_side < 1.0f) && (max_side < 1.2f);
-            
-            // 2. 승용차 (일반적인 크기)
             bool is_car = (min_side >= 1.0f && min_side < 2.5f) && (max_side >= 2.0f && max_side < 6.0f);
-            
-            // 3. 버스/트럭 (크고 도로 위에 있는 것)
             bool is_large = (min_side >= 2.0f && min_side < 3.5f) && (max_side >= 5.5f && max_side < 19.0f);
-            bool is_on_road = std::abs(box.y) < 4.5f; // 좌우 4.5m 이내
+            bool is_on_road = std::abs(box.y) < 4.5f; 
             bool is_bus = is_large && is_on_road;
 
-            // 셋 다 아니면 스킵
             if (!is_person && !is_car && !is_bus) continue; 
 
-            // Detection3D 메시지 채우기
             vision_msgs::Detection3D detection;
             detection.header = detection_array.header;
             detection.bbox.center.position.x = box.x;
@@ -388,7 +348,6 @@ public:
             detection.results.push_back(hypothesis);
             detection_array.detections.push_back(detection);
 
-            // 마커 채우기
             visualization_msgs::Marker marker;
             marker.header = msg->header;
             marker.ns = "bbox"; 
@@ -398,18 +357,18 @@ public:
             marker.pose = detection.bbox.center;
             marker.pose.orientation = detection.bbox.center.orientation;
             marker.scale = detection.bbox.size;
-            marker.color.r = 0.0f; marker.color.g = 1.0f; marker.color.b = 0.0f; marker.color.a = 0.4f; // 초록색 반투명
+            marker.color.r = 0.0f; marker.color.g = 1.0f; marker.color.b = 0.0f; marker.color.a = 0.4f;
             marker.lifetime = ros::Duration(0.1);
             marker_array.markers.push_back(marker);
 
             cluster_id++;
         }
 
-        // Publish
-        cloud_origin_pub_.publish(*cloud_origin);
         cloud_cluster_pub_.publish(*cloud_clustered);
         bbox_pub_.publish(detection_array);
         marker_pub_.publish(marker_array);
+
+        cloud_origin_pub_.publish(*cloud_origin);
     }
 };
 
