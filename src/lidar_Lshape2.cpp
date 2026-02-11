@@ -173,38 +173,9 @@ public:
         nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 4000);
 
-        // [기존 파라미터]
-        nh_.setParam("sensor_height", 1.55);
-        nh_.setParam("verbose", false);
-        nh_.setParam("num_iter", 3);
-        nh_.setParam("num_lpr", 20);
-        nh_.setParam("num_min_pts", 10);
-        nh_.setParam("th_seeds", 0.4);
-        nh_.setParam("th_dist", 0.3);
-        nh_.setParam("max_r", 80.0);
-        nh_.setParam("min_r", 2.7);
-        nh_.setParam("uprightness_thr", 0.707);
-        nh_.setParam("adaptive_seed_selection_margin", -1.1); // 이것도 추가
+        // [수정] 복잡한 setParam 다 제거함 (launch 파일에서 관리)
 
-        // [★ 핵심 수정] Zone 관련 필수 파라미터 추가! (이게 없어서 터짐)
-        nh_.setParam("num_zones", 4);
-        
-        std::vector<int> num_sectors = {16, 32, 54, 32};
-        nh_.setParam("num_sectors_each_zone", num_sectors);
-
-        std::vector<int> num_rings = {2, 4, 4, 4};
-        nh_.setParam("num_rings_each_zone", num_rings);
-
-        std::vector<double> min_ranges = {2.7, 12.3625, 22.025, 41.35};
-        nh_.setParam("min_ranges", min_ranges);
-
-        std::vector<double> elevation_thresholds = {0.523, 0.994, 1.085, 1.15};
-        nh_.setParam("elevation_thresholds", elevation_thresholds);
-
-        std::vector<double> flatness_thresholds = {0.0, 0.0012, 0.0088, 0.0};
-        nh_.setParam("flatness_thresholds", flatness_thresholds);
-
-        // 객체 생성
+        // 객체 생성 (NodeHandle 포인터 전달)
         patchwork_ptr_.reset(new PatchWorkpp<PointT>(&nh_));
 
         cloud_origin_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_origin", 1);
