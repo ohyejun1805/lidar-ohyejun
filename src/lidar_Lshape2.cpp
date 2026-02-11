@@ -144,7 +144,7 @@ private:
     ros::Publisher bbox_pub_;                 
     ros::Publisher marker_pub_;               
 
-    // [핵심] 템플릿 클래스 선언
+    // 템플릿 클래스 선언
     boost::shared_ptr<PatchWorkpp<PointT>> patchwork_ptr_; 
 
     float voxel_size_;
@@ -173,9 +173,8 @@ public:
         nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 4000);
 
-        // [중요] Patchwork++ 파라미터 강제 설정
-        // 이 버전은 nh_.param()으로 값을 가져오므로, 미리 설정해두어야 합니다.
-        nh_.setParam("sensor_height", 1.55);   // <-- 센서 높이 1.55m
+        // [기존 파라미터]
+        nh_.setParam("sensor_height", 1.55);
         nh_.setParam("verbose", false);
         nh_.setParam("num_iter", 3);
         nh_.setParam("num_lpr", 20);
@@ -185,8 +184,27 @@ public:
         nh_.setParam("max_r", 80.0);
         nh_.setParam("min_r", 2.7);
         nh_.setParam("uprightness_thr", 0.707);
+        nh_.setParam("adaptive_seed_selection_margin", -1.1); // 이것도 추가
 
-        // [핵심 해결] Parameters 구조체 대신 NodeHandle 포인터를 전달!
+        // [★ 핵심 수정] Zone 관련 필수 파라미터 추가! (이게 없어서 터짐)
+        nh_.setParam("num_zones", 4);
+        
+        std::vector<int> num_sectors = {16, 32, 54, 32};
+        nh_.setParam("num_sectors_each_zone", num_sectors);
+
+        std::vector<int> num_rings = {2, 4, 4, 4};
+        nh_.setParam("num_rings_each_zone", num_rings);
+
+        std::vector<double> min_ranges = {2.7, 12.3625, 22.025, 41.35};
+        nh_.setParam("min_ranges", min_ranges);
+
+        std::vector<double> elevation_thresholds = {0.523, 0.994, 1.085, 1.15};
+        nh_.setParam("elevation_thresholds", elevation_thresholds);
+
+        std::vector<double> flatness_thresholds = {0.0, 0.0012, 0.0088, 0.0};
+        nh_.setParam("flatness_thresholds", flatness_thresholds);
+
+        // 객체 생성
         patchwork_ptr_.reset(new PatchWorkpp<PointT>(&nh_));
 
         cloud_origin_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_origin", 1);
@@ -210,8 +228,8 @@ public:
         // --- Step 1: Patchwork++ Ground Removal ---
         pcl::PointCloud<PointT> cloud_ground, cloud_nonground;
         
-        // [핵심] 4번째 인자(time_taken) 포함해서 호출
         double time_taken;
+        // estimate_ground 호출
         patchwork_ptr_->estimate_ground(*cloud_origin, cloud_ground, cloud_nonground, time_taken);
 
         pcl::PointCloud<PointT>::Ptr cloud_obstacles(new pcl::PointCloud<PointT>);
