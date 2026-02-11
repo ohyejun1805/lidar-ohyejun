@@ -160,13 +160,14 @@ private:
     ros::NodeHandle nh_;
     ros::Subscriber lidar_sub_;
     
+    ros::Publisher cloud_origin_pub_;
     ros::Publisher cloud_ground_removed_pub_; // 지면 제거 결과
     ros::Publisher cloud_cluster_pub_;        // 클러스터링 결과
     ros::Publisher bbox_pub_;                 // 박스 결과
     ros::Publisher marker_pub_;               // 시각화 마커
 
     // Patchwork++ 객체
-    boost::shared_ptr<Patchworkpp> patchwork_ptr_;
+    boost::shared_ptr<PatchWorkpp::PatchWorkpp> patchwork_ptr_;
 
     float voxel_size_;
     float roi_min_x_, roi_max_x_;
@@ -220,7 +221,7 @@ public:
         nh_.param<bool>("verbose", verbose_, false);
 
         // 3. Patchwork++ 객체 생성 및 초기화
-        patchworkpp::Parameters params;
+        PatchWorkpp::Parameters params;
         params.verbose = verbose_;
         params.sensor_height = sensor_height_;
         params.num_iter = num_iter_;
@@ -232,9 +233,10 @@ public:
         params.min_r = min_r_;
         params.uprightness_th = uprightness_th_;
 
-        patchwork_ptr_.reset(new Patchworkpp(params));
+        patchwork_ptr_.reset(new Patchworkpp::PatchWorkpp(params));
 
-        // 4. Publisher 설정
+        // Publisher 설정 (cloud_origin_pub_ 복구)
+        cloud_origin_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_origin", 1);
         cloud_ground_removed_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_ground_removed", 1);
         cloud_cluster_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("/gigacha/lidar/cloud_clustered", 1);
         bbox_pub_ = nh_.advertise<vision_msgs::Detection3DArray>("/gigacha/lidar/bounding_boxes", 1);
@@ -316,7 +318,9 @@ public:
         
         visualization_msgs::MarkerArray marker_array; 
         pcl::PointCloud<PointT>::Ptr cloud_clustered(new pcl::PointCloud<PointT>);
-        cloud_clustered->header = msg->header;
+        
+        // [수정] 헤더 할당 시 PCL 변환 함수 사용 (에러 해결)
+        pcl_conversions::toPCL(msg->header, cloud_clustered->header);
 
         int cluster_id = 0;
         
