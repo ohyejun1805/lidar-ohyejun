@@ -35,19 +35,19 @@ public:
         
         // 초기 불확실성
         P_(0,0) = 1.0; P_(1,1) = 1.0; P_(2,2) = 1.0;
-        P_(3,3) = 1000.0; P_(4,4) = 1000.0; P_(5,5) = 1000.0;
+        P_(3,3) = 100.0; P_(4,4) = 100.0; P_(5,5) = 100.0;
 
         // Q (프로세스 노이즈) - 튜닝 포인트
         Q_ = Eigen::MatrixXd::Identity(6, 6);
         Q_ *= 0.1; 
         Q_(3,3) = 2.0; // 속도 변화 가능성 큼
-        Q_(4,4) = 0.5; // 각도 변화
+        Q_(4,4) = 0.1; // 각도 변화
         Q_(5,5) = 0.5; // 각속도 변화
 
         // R (관측 노이즈) - [x, y, z, yaw] 4개 관측
         R_ = Eigen::MatrixXd::Identity(4, 4);
         R_(0,0) = 0.1; R_(1,1) = 0.1; R_(2,2) = 0.1;
-        R_(3,3) = 0.3; // 각도 관측 노이즈 (약 17도)
+        R_(3,3) = 0.5; // 각도 관측 노이즈 (약 17도)
     }
 
     void init(const geometry_msgs::Point& pos, double yaw)
@@ -81,6 +81,10 @@ public:
         }
         // z는 등속 유지 (state_(2) += 0)
         state_(4) += yaw_rate * dt;
+
+        // 예측 단계에서도 각도 정규화 (-PI ~ PI)
+        while (state_(4) > M_PI) state_(4) -= 2.0 * M_PI;
+        while (state_(4) < -M_PI) state_(4) += 2.0 * M_PI;
 
         // 2. 자코비안 F 계산
         Eigen::MatrixXd Fj = Eigen::MatrixXd::Identity(6, 6);
@@ -117,13 +121,15 @@ public:
 
         // 관측 행렬 H (상태 -> 측정)
         Eigen::MatrixXd H = Eigen::MatrixXd::Zero(4, 6);
-        H(0,0) = 1.0; H(1,1) = 1.0; H(2,2) = 1.0; 
+        H(0,0) = 1.0; 
+        H(1,1) = 1.0; 
+        H(2,2) = 1.0; 
         H(3,4) = 1.0; // yaw 관측
 
         // 잔차 계산 (y = z - Hx)
         Eigen::VectorXd y = z - H * state_;
 
-        // ★ 각도 정규화 (-PI ~ PI)
+        // 각도 정규화 (-PI ~ PI)
         while (y(3) > M_PI) y(3) -= 2.0 * M_PI;
         while (y(3) < -M_PI) y(3) += 2.0 * M_PI;
 
@@ -415,7 +421,7 @@ private:
 
         // 속도가 어느 정도 붙었을 때만 보정
         // 정지 상태일 때는 방향을 알 수 없으므로 보정하지 않음
-        if (std::abs(track_v) > 0.5) 
+        if (std::abs(track_v) > 2.0) 
         {
             // 칼만 필터가 추정 중인 이동 방향 각도
             double vel_angle = track_yaw; 
@@ -470,7 +476,7 @@ private:
         double abs_vx = obj_vx + my_car_velocity_; 
 
         // 절대 속도가 1.8km/h (0.5m/s) 미만이면 정지로 간주
-        if (std::abs(abs_vx) < 0.5) 
+        if (std::abs(abs_vx) < 1.0) 
         {
             track.kf.setVelocityZero(); 
         }

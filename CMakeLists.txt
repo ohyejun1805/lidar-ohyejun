@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_conversions
   nav_msgs            # [필수] 내 차 속도
   visualization_msgs  # [필수] 마커 시각화
+  patchworkpp         # [★추가됨] 여기에 추가해야 합니다
 )
 
 ## System dependencies
@@ -43,6 +44,7 @@ catkin_package(
     pcl_conversions
     nav_msgs
     visualization_msgs
+    patchworkpp      # [★추가됨] 의존성 명시
   DEPENDS
     PCL
     OpenCV
@@ -53,16 +55,17 @@ catkin_package(
 ###########
 
 ## ===============================================
-## 1. Clustering Node (기존 유지)
+## 1. Clustering Node (Patchwork++ 적용 대상)
 ## ===============================================
 add_executable(gigacha_lidar_clustering
-  src/lidar.cpp
+  src/lidar.cpp 
 )
 
 target_link_libraries(gigacha_lidar_clustering
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}
+  patchworkpp::patchworkpp  # [★추가됨] 라이브러리 링크 필수!
 )
 
 add_dependencies(gigacha_lidar_clustering
@@ -89,10 +92,8 @@ add_dependencies(gigacha_lidar_tracking
 )
 
 ## ===============================================
-## 3. Cone Mission Node (★ 여기만 새로 추가됨!)
+## 3. Cone Mission Node (기존 유지)
 ## ===============================================
-# 주의: src 폴더 안의 파일명이 lidar_cone.cpp 인지 lidar_corn.cpp 인지 꼭 확인하세요!
-# 저는 lidar_cone.cpp (콘)으로 적어두었습니다.
 add_executable(gigacha_lidar_cone
   src/lidar_cone.cpp
 )
@@ -115,7 +116,7 @@ add_dependencies(gigacha_lidar_cone
 install(TARGETS
   gigacha_lidar_clustering
   gigacha_lidar_tracking
-  gigacha_lidar_cone      # [★추가됨] 설치 목록에도 추가
+  gigacha_lidar_cone
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
