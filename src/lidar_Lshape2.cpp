@@ -162,16 +162,16 @@ public:
         ROS_INFO("GIGACHA LiDAR Clustering (With Patchwork++) Init...");
         
         nh_.param<float>("voxel_size", voxel_size_, 0.15f);
-        nh_.param<float>("roi_min_x", roi_min_x_, -30.0f);
-        nh_.param<float>("roi_max_x", roi_max_x_, 40.0f);
-        nh_.param<float>("roi_min_y", roi_min_y_, -12.0f);
-        nh_.param<float>("roi_max_y", roi_max_y_, 12.0f);
+        nh_.param<float>("roi_min_x", roi_min_x_, -20.0f);
+        nh_.param<float>("roi_max_x", roi_max_x_, 30.0f);
+        nh_.param<float>("roi_min_y", roi_min_y_, -7.0f);
+        nh_.param<float>("roi_max_y", roi_max_y_, 7.0f);
         nh_.param<float>("roi_min_z", roi_min_z_, -2.5f); 
         nh_.param<float>("roi_max_z", roi_max_z_, 2.5f);
         
-        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.6f);
-        nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
-        nh_.param<int>("max_cluster_size", max_cluster_size_, 4000);
+        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.35f);
+        nh_.param<int>("min_cluster_size", min_cluster_size_, 10);
+        nh_.param<int>("max_cluster_size", max_cluster_size_, 5000);
 
         // [수정] 복잡한 setParam 다 제거함 (launch 파일에서 관리)
 
@@ -278,7 +278,7 @@ public:
             float max_side = std::max(box.len, box.wid); 
 
             if (max_side < 0.2f) continue;  
-            if (max_side > 20.0f) continue; 
+            if (max_side > 18.0f) continue; 
             if (box.hgt < 0.2f) continue; 
 
             bool is_person = (min_side < 1.0f) && (max_side < 1.2f);
