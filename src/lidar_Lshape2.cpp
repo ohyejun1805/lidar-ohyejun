@@ -169,7 +169,7 @@ public:
         nh_.param<float>("roi_min_z", roi_min_z_, -2.5f); 
         nh_.param<float>("roi_max_z", roi_max_z_, 2.5f);
         
-        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.35f);
+        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.6f);
         nh_.param<int>("min_cluster_size", min_cluster_size_, 10);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 5000);
 
@@ -222,12 +222,48 @@ public:
         crop_filter.filter(*cloud_crop);
 
         if (cloud_crop->empty()) return;
+        // =========================================================
+        // [추가] 사용자 아이디어 적용: 거리별 Z축 커팅 (Voxel 전처리)
+        // "가까운 건 과감하게 바닥 30cm 자르고, 먼 건 살린다"
+        // =========================================================
+        
+        pcl::PointCloud<PointT>::Ptr cloud_z_filtered(new pcl::PointCloud<PointT>);
+        cloud_z_filtered->reserve(cloud_crop->points.size());
+
+        float dist_threshold = 20.0f; // 20m 기준
+        
+        // 센서 높이 1.55m 가정 시, 바닥은 z = -1.55
+        // 여기서 30cm 위를 자르려면: -1.55 + 0.3 = -1.25보다 큰 것만 남김
+        // (사용자 환경에 맞춰서 -1.2 ~ -1.3 사이로 조절하세요)
+        float z_cut_threshold = -1.25f; 
+
+        for (const auto& p : cloud_crop->points)
+        {
+            float dist = std::sqrt(p.x * p.x + p.y * p.y);
+
+            if (dist < dist_threshold)
+            {
+                // [가까운 영역] 바닥 노이즈랑 뭉치지 않게 하단 30cm 삭제
+                if (p.z > z_cut_threshold) 
+                {
+                    cloud_z_filtered->points.push_back(p);
+                }
+            }
+            else
+            {
+                // [먼 영역] 점이 듬성듬성하므로 바닥 쪽이라도 소중하게 살림
+                cloud_z_filtered->points.push_back(p);
+            }
+        }
+        
+        // 필터링 된 결과를 Voxel Grid 입력으로 사용하기 위해 덮어씌움
+        *cloud_crop = *cloud_z_filtered;
 
         // --- Step 3: Voxel Grid Downsampling ---
         pcl::PointCloud<PointT>::Ptr cloud_final(new pcl::PointCloud<PointT>);
         pcl::VoxelGrid<PointT> voxel_filter;
         voxel_filter.setInputCloud(cloud_crop);
-        voxel_filter.setLeafSize(voxel_size_, voxel_size_, voxel_size_);
+        voxel_filter.setLeafSize(voxel_size_, voxel_size_, voxel_size_ * 2.5f);
         voxel_filter.filter(*cloud_final);
 
         if (cloud_final->empty()) return;
