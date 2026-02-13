@@ -62,7 +62,7 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
             points_2d.push_back(Eigen::Vector2f(p.x, p.y));
     }
 
-    float best_core = std::numeric_limits<float>::max(); //점수 최소화
+    float best_score = std::numeric_limits<float>::max(); //점수 최소화
     float best_angle = 0.0f;
     
     // 결과 저장용 변수들
@@ -670,15 +670,14 @@ public:
             float min_side = std::min(box.len, box.wid); 
             float max_side = std::max(box.len, box.wid); 
 
+            // 0으로 나누기 방지용 안전한 min_side
+            float safe_min_side = std::max(min_side, 0.01f); 
+            float aspect_ratio = max_side / safe_min_side;
+
             // 1. 기본 노이즈 제거 (너무 작거나 너무 높거나)
             if (max_side < 0.2f) continue;   // 점 몇 개 뭉친 노이즈
             if (max_side > 20.0f) continue;  // 20m 넘는 건 건물 벽일 확률 높음
             if (box.hgt < 0.5f) continue;    // 높이 50cm 미만(화단, 낮은 턱) 무시
-
-            // 가드레일은 거르려고, 가드레일은 비율이 크니까까
-            float aspect_ratio = max_side / (min_side + 1e-4); // 쓰레기값 넣어서 0 들어가는거 방지지
-
-            bool is_on_road = std::abs(box.y) < 5.0f; 
 
             // 사람
             bool is_person = (max_side < 1.0f) && (min_side < 0.8f);
@@ -687,16 +686,20 @@ public:
             bool is_car = (min_side >= 0.2f && min_side <= 2.5f) && 
                         (max_side >= 1.2f && max_side <= 5.8f);
 
-            // 대형차차
-            bool is_large = (max_side > 5.8f && max_side <= 19.0f) && (min_side >= 0.5f);
+            // 대형차
+            bool is_large = (max_side > 5.8f && max_side <= 19.0f);
 
 
             if (is_person) {} //사람은 onroad 아니여서 걍 pass
-            else if (is_car) {
-                if (aspect_ratio > 15.0f && !is_on_road) continue; 
+
+            else if (is_car) 
+            {
+                if (aspect_ratio > 15.0f) continue; 
             }
-            else if (is_large) {
-                if (!is_on_road) continue;
+
+            else if (is_large) 
+            {
+                if (box.hgt < 2.2f || box.hgt > 4.5f) {continue;}
             }
             else {
                 continue;
