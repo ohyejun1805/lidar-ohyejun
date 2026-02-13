@@ -25,6 +25,7 @@
 #include <pcl/point_types.h>
 #include <pcl/common/common.h>
 #include <pcl/common/transforms.h>
+#include <pcl/common/centroid.h>
 
 using PointT = pcl::PointXYZI; // 필요에 따라 PointXYZ로 변경 가능
 
@@ -61,8 +62,10 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
             points_2d.push_back(Eigen::Vector2f(p.x, p.y));
     }
 
-    float min_area = std::numeric_limits<float>::max();
+    float best_core = std::numeric_limits<float>::max(); //점수 최소화
     float best_angle = 0.0f;
+    
+    // 결과 저장용 변수들
     float best_min_x = 0.0f, best_max_x = 0.0f;
     float best_min_y = 0.0f, best_max_y = 0.0f;
 
@@ -77,10 +80,18 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
         float current_min_y = std::numeric_limits<float>::max();
         float current_max_y = std::numeric_limits<float>::lowest();
 
+        //회전 변환된 좌표들 저장해둠.(distance 계산용)
+        std::vector<float> rxs,rys;
+        rxs.reserve(points_2d.size());
+        rys.reserve(points_2d.size());
+
         for (const auto& p : points_2d) 
         {
             float rx = p.x() * cos_t + p.y() * sin_t;
             float ry = -p.x() * sin_t + p.y() * cos_t;
+
+            rxs.push_back(rx);
+            rys.push_back(ry);
 
             if (rx < current_min_x) current_min_x = rx;
             if (rx > current_max_x) current_max_x = rx;
@@ -92,9 +103,29 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
         float depth = current_max_y - current_min_y;
         float area = width * depth;
 
-        if (area < min_area) 
+        float dist_sum = 0.0f;
+
+        for (size_t i = 0; i < points_2d.size(); i++)
         {
-            min_area = area;
+            // 각 점이 4개의 변 중 "가장 가까운 변"까지의 거리를 구함
+            float d_xmin = std::abs(rxs[i] - current_min_x);
+            float d_xmax = std::abs(rxs[i] - current_max_x);
+            float d_ymin = std::abs(rys[i] - current_min_y);
+            float d_ymax = std::abs(rys[i] - current_max_y);
+
+            // X축 변과 Y축 변 중 더 가까운 쪽을 선택 
+            float min_d_x = std::min(d_xmin, d_xmax);
+            float min_d_y = std::min(d_ymin, d_ymax);
+            
+            // 최종적으로 가장 가까운 테두리와의 거리
+            dist_sum += std::min(min_d_x, min_d_y);
+        }
+
+        float score = area + dist_sum;
+
+        if (score < best_score) 
+        {
+            best_score = score;
             best_angle = theta;
             best_min_x = current_min_x;
             best_max_x = current_max_x;

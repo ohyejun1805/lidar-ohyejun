@@ -65,8 +65,8 @@ public:
         nh_.param<float>("roi_min_z", roi_min_z_, -2.5f); 
         nh_.param<float>("roi_max_z", roi_max_z_, 2.5f);
         
-        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.6f);
-        nh_.param<int>("min_cluster_size", min_cluster_size_, 10);
+        nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.35f);
+        nh_.param<int>("min_cluster_size", min_cluster_size_, 5);
         nh_.param<int>("max_cluster_size", max_cluster_size_, 5000);
 
         patchwork_ptr_.reset(new PatchWorkpp<PointT>(&nh_));
@@ -117,7 +117,7 @@ public:
         pcl::PointCloud<PointT>::Ptr cloud_final(new pcl::PointCloud<PointT>);
         pcl::VoxelGrid<PointT> voxel_filter;
         voxel_filter.setInputCloud(cloud_crop);
-        voxel_filter.setLeafSize(voxel_size_, voxel_size_, voxel_size_ * 2.5f);
+        voxel_filter.setLeafSize(voxel_size_, voxel_size_, voxel_size_);
         voxel_filter.filter(*cloud_final);
 
         if (cloud_final->empty()) return;
