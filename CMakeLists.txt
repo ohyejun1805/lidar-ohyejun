@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs            # [필수] 내 차 속도
   visualization_msgs  # [필수] 마커 시각화
   patchworkpp         # [★추가됨] 여기에 추가해야 합니다
+  morai_msgs          # [★추가됨] MORAI 메시지 패키지
 )
 
 ## System dependencies
@@ -44,7 +45,8 @@ catkin_package(
     pcl_conversions
     nav_msgs
     visualization_msgs
-    patchworkpp      # [★추가됨] 의존성 명시
+    patchworkpp      #  의존성 명시
+    morai_msgs       #  MORAI 메시지 패키지
   DEPENDS
     PCL
     OpenCV
@@ -65,7 +67,7 @@ target_link_libraries(gigacha_lidar_clustering
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}
-  patchworkpp::patchworkpp  # [★추가됨] 라이브러리 링크 필수!
+  patchworkpp::patchworkpp  #  라이브러리 링크 필수!
 )
 
 add_dependencies(gigacha_lidar_clustering

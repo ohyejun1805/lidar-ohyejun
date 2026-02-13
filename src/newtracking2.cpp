@@ -7,6 +7,9 @@
 #include <geometry_msgs/Quaternion.h>
 #include <nav_msgs/Odometry.h> 
 
+// MORAI 시뮬레이터 차량 상태 토픽을 받기 위한 헤더 추가
+#include <morai_msgs/EgoVehicleStatus.h> 
+
 #include <limits>
 #include <vector>
 #include <map>
@@ -27,7 +30,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl/common/centroid.h>
 
-using PointT = pcl::PointXYZI; // 필요에 따라 PointXYZ로 변경 가능
+using PointT = pcl::PointXYZI; \
 
 struct BoxInfo 
 {
@@ -62,7 +65,7 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
             points_2d.push_back(Eigen::Vector2f(p.x, p.y));
     }
 
-    float best_score = std::numeric_limits<float>::max();
+    float best_score = std::numeric_limits<float>::max(); //점수 최소화
     float best_angle = 0.0f;
     
     // 결과 저장용 변수들
@@ -80,6 +83,7 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
         float current_min_y = std::numeric_limits<float>::max();
         float current_max_y = std::numeric_limits<float>::lowest();
 
+        //회전 변환된 좌표들 저장해둠.(distance 계산용)
         std::vector<float> rxs,rys;
         rxs.reserve(points_2d.size());
         rys.reserve(points_2d.size());
@@ -106,14 +110,17 @@ BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
 
         for (size_t i = 0; i < points_2d.size(); i++)
         {
+            // 각 점이 4개의 변 중 "가장 가까운 변"까지의 거리를 구함
             float d_xmin = std::abs(rxs[i] - current_min_x);
             float d_xmax = std::abs(rxs[i] - current_max_x);
             float d_ymin = std::abs(rys[i] - current_min_y);
             float d_ymax = std::abs(rys[i] - current_max_y);
 
+            // X축 변과 Y축 변 중 더 가까운 쪽을 선택 
             float min_d_x = std::min(d_xmin, d_xmax);
             float min_d_y = std::min(d_ymin, d_ymax);
             
+            // 최종적으로 가장 가까운 테두리와의 거리
             dist_sum += std::min(min_d_x, min_d_y);
         }
 
@@ -355,7 +362,7 @@ class GigachaLidarTracking
 private:
     ros::NodeHandle nh_;
     ros::Subscriber detection_sub_;
-    ros::Subscriber odom_sub_; 
+    ros::Subscriber ego_sub_; // 구독자 변수명 변경 (odom_sub_ -> ego_sub_)
     
     ros::Publisher tracking_pub_;
     ros::Publisher marker_pub_;
@@ -558,17 +565,31 @@ private:
         track.kf.predict(dt);
         track.kf.update(measurement_pos, measurement_yaw);
 
+        // ----------------------------------------------------------------
+        // 2D 벡터를 이용한 완벽한 절대 속도 크기(Magnitude) 계산
+        // ----------------------------------------------------------------
         double obj_rel_v = track.kf.state_(3); 
-        double obj_vx = obj_rel_v * cos(track.kf.state_(4)); 
-        double abs_vx = obj_vx + my_car_velocity_; 
+        
+        // 상대 속도를 X축, Y축 벡터로 분해
+        double obj_rel_vx = obj_rel_v * cos(track.kf.state_(4)); 
+        double obj_rel_vy = obj_rel_v * sin(track.kf.state_(4)); 
 
-        if (std::abs(abs_vx) < 1.0) 
+        // 내 차 속도를 더해 완벽한 절대 속도 벡터 계산 (Y축은 변화 없음 가정)
+        double abs_vx = obj_rel_vx + my_car_velocity_; 
+        double abs_vy = obj_rel_vy;
+        //근데 급격한 코너링 같은거 하면 y축 변화가 있을 수도 있음. 일단은 실행해보고 결정!!!!!!!!
+
+        // 피타고라스 정리를 이용해 X, Y 벡터의 최종 크기 계산
+        double abs_v_mag = std::sqrt(abs_vx * abs_vx + abs_vy * abs_vy);
+
+        // 절대 속력 크기가 1.0 m/s 이하이면 멈춰있는 것으로 간주
+        if (abs_v_mag < 1.0) 
         {
             track.kf.setVelocityZero(); 
         }
 
-        // 칼만 필터가 안정화(age > 3)된 후, 절대 속도가 1.5 m/s 이상이면 움직인 것으로 확정!
-        if (track.age > 3 && std::abs(abs_vx) > 1.5) 
+        // 칼만 필터가 안정화(age > 3)된 후, 절대 속력 크기가 1.5 m/s 이상이면 움직인 것으로 확정!
+        if (track.age > 3 && abs_v_mag > 1.5) 
         {
             track.has_moved = true; 
         }
@@ -638,7 +659,9 @@ public:
         nh_.param<float>("gating_threshold", gating_threshold_, 10.0f); 
         
         detection_sub_ = nh_.subscribe("/gigacha/lidar/bounding_boxes", 1, &GigachaLidarTracking::detectionCallback, this);
-        odom_sub_ = nh_.subscribe("/odom", 1, &GigachaLidarTracking::odomCallback, this);
+        
+        // 구독 토픽을 "/Ego_topic"으로 변경하고 egoCallback 연결
+        ego_sub_ = nh_.subscribe("/Ego_topic", 1, &GigachaLidarTracking::egoCallback, this);
         
         tracking_pub_ = nh_.advertise<vision_msgs::Detection3DArray>("/gigacha/lidar/tracked_objects", 1);
         marker_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/tracked_objects", 1);
@@ -646,9 +669,10 @@ public:
         last_update_time_ = ros::Time::now();
     }
     
-    void odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
+    // MORAI 메시지 타입을 받아서 직진 속도를 갱신하도록 콜백 함수 수정
+    void egoCallback(const morai_msgs::EgoVehicleStatus::ConstPtr& msg)
     {
-        my_car_velocity_ = msg->twist.twist.linear.x; 
+        my_car_velocity_ = msg->velocity.x; 
     }
     
     void detectionCallback(const vision_msgs::Detection3DArray::ConstPtr& msg)
@@ -764,7 +788,7 @@ public:
                 // 객체가 대형(is_large)일 때만 속도 이력 검사
                 if (track.is_large_size) 
                 {
-                    // 대형인데 한 번도 움직인 이력이 없다면 -> 벽, 방음벽 등 정적 구조물!
+                    // 대형인데 한 번도 움직인 이력이 없다면 -> 벽, 방음벽 등 정적 구조물
                     if (!track.has_moved) {
                         should_publish = false; // 퍼블리시 대상에서 제외
                     }
