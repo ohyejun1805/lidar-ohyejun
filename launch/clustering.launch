@@ -7,7 +7,7 @@
         <param name="num_iter" value="5"/>
         <param name="num_lpr" value="20"/>
         <param name="num_min_pts" value="10"/>
-        <param name="th_seeds" value="0.2"/>
+        <param name="th_seeds" value="0.3"/>
         <param name="th_dist" value="0.20"/>
         <param name="max_r" value="80.0"/>
         <param name="min_r" value="2.7"/>
