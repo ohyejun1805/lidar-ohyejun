@@ -62,7 +62,7 @@ public:
         nh_.param<float>("roi_max_x", roi_max_x_, 30.0f);
         nh_.param<float>("roi_min_y", roi_min_y_, -7.0f);
         nh_.param<float>("roi_max_y", roi_max_y_, 7.0f);
-        nh_.param<float>("roi_min_z", roi_min_z_, -1.50f); 
+        nh_.param<float>("roi_min_z", roi_min_z_, -1.53f); 
         nh_.param<float>("roi_max_z", roi_max_z_, 2.5f);
         
         nh_.param<float>("cluster_tolerance", cluster_tolerance_, 0.35f);
