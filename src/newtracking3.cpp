@@ -384,7 +384,7 @@ private:
         
         bool has_moved;       // 한 번이라도 움직였는지 기록
         bool is_large_size;   // 현재 박스가 대형인지 기록
-        double abs_velocity;  // [추가] RViz 디버깅용: 계산된 절대 속도 저장
+        double abs_velocity;  // RViz 디버깅용: 계산된 절대 속도 저장
     };
     
     std::vector<Track> tracks_;
@@ -473,7 +473,7 @@ private:
             if (!det_matched[j]) unmatched_detections.push_back(j);
     }
 
-    // [수정] 인자를 tracks_ 배열 자체를 받도록 변경하여 내부 속도/상태 데이터를 꺼내볼 수 있도록 함
+    // 인자를 tracks_ 배열 자체를 받도록 변경하여 내부 속도/상태 데이터를 꺼내볼 수 있도록 함
     void publishMarkers(const std_msgs::Header& header, const std::vector<Track>& track_list)
     {
         visualization_msgs::MarkerArray marker_array;
@@ -503,10 +503,12 @@ private:
             marker.pose.orientation = det.bbox.center.orientation;
             marker.scale = det.bbox.size;
             
-            // [수정] 움직임 여부에 따른 색상 로직 (동적: 빨간색, 정적: 초록색)
+            // 움직임 여부에 따른 색상 로직 (동적: 빨간색, 정적: 초록색)
             if (track.has_moved) {
                 marker.color.r = 1.0f; marker.color.g = 0.0f; marker.color.b = 0.0f; 
-            } else {
+            } 
+            else 
+            {
                 marker.color.r = 0.0f; marker.color.g = 1.0f; marker.color.b = 0.0f; 
             }
             marker.color.a = 0.5f; 
@@ -517,10 +519,10 @@ private:
             // 2. 텍스트 정보 (TEXT) 마커 생성
             // ==========================================
             visualization_msgs::Marker text_marker = marker;
-            text_marker.ns = "tracked_info"; // [수정] 네임스페이스 분리
+            text_marker.ns = "tracked_info"; // 네임스페이스 분리
             text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
             
-            // [추가] ID, 상태(Move/Stop), 절대속도(m/s) 포맷팅
+            // ID, 상태(Move/Stop), 절대속도(m/s) 포맷팅
             char text_buf[128];
             std::snprintf(text_buf, sizeof(text_buf), "ID: %d %s\n%.1f m/s", 
                           track_id, 
@@ -629,10 +631,10 @@ private:
 
         double abs_v_mag = std::sqrt(abs_vx * abs_vx + abs_vy * abs_vy);
 
-        // [추가] 계산된 절대 속도를 구조체에 저장 (RViz 디버깅용)
+        // 계산된 절대 속도를 구조체에 저장 (RViz 디버깅용)
         track.abs_velocity = abs_v_mag;
 
-        // [수정] 🚨 여기서 기존 track.kf.setVelocityZero(); 삭제 완료! 
+        // 여기서 기존 track.kf.setVelocityZero(); 삭제 완료! 
         // 칼만필터 상태 강제 초기화는 필터 추정을 꼬이게 만들므로 제거해야 합니다.
 
         // 칼만 필터가 안정화(age > 3)된 후, 절대 속력 크기가 1.5 m/s 이상이면 움직인 것으로 확정!
@@ -642,7 +644,8 @@ private:
         }
 
         float max_s = std::max(detection.bbox.size.x, detection.bbox.size.y);
-        if (max_s > 5.8f) {
+        if (max_s > 5.8f) 
+        {
             track.is_large_size = true;
         } 
         else 
@@ -684,7 +687,7 @@ private:
             
             new_track.has_moved = false; 
             new_track.is_large_size = false;
-            new_track.abs_velocity = 0.0; // [추가] 초기 속도값 할당
+            new_track.abs_velocity = 0.0; // 초기 속도값 할당
 
             geometry_msgs::Point init_pos = getCenter(detections.detections[det_idx]);
             double init_yaw = getYawFromQuaternion(detections.detections[det_idx].bbox.center.orientation);
@@ -795,7 +798,7 @@ public:
             empty.header = msg->header;
             tracking_pub_.publish(empty);
             
-            // [수정] 빈 배열일 때도 tracks_ 기준으로 그려 기존 객체가 사라지는 과정을 RViz에서 확인
+            // 빈 배열일 때도 tracks_ 기준으로 그려 기존 객체가 사라지는 과정을 RViz에서 확인
             publishMarkers(msg->header, tracks_); 
             return;
         }

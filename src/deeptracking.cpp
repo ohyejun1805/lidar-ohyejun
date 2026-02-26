@@ -487,11 +487,7 @@ public:
         vision_msgs::Detection3DArray processed_msg = *msg; 
         std::vector<int> valid_indices; 
 
-        // ==============================================================================
-        // [각주 6: Size Filtering]
-        // L-Shape Fitting 로직을 완전히 빼버리고, PointPillars가 이미 완벽하게 찾아준
-        // size.x, size.y, size.z 만 사용하여 비정상적인 박스(노이즈)를 걸러냅니다.
-        // ==============================================================================
+        // Size Filtering
         for (size_t i = 0; i < processed_msg.detections.size(); ++i)
         {
             float len = processed_msg.detections[i].bbox.size.x;
