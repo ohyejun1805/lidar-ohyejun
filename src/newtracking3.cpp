@@ -550,7 +550,8 @@ private:
                 arrow_marker.action = visualization_msgs::Marker::ADD;
 
                 // Scale: x=화살표 대 길이, y=대 두께, z=화살표 머리 두께
-                arrow_marker.scale.x = std::max(det.bbox.size.x, 2.0f) + 1.0; 
+                // [수정] std::max 타입 불일치 오류 해결 (2.0f -> 2.0)
+                arrow_marker.scale.x = std::max(det.bbox.size.x, 2.0) + 1.0; 
                 arrow_marker.scale.y = 0.2; 
                 arrow_marker.scale.z = 0.2;
 
