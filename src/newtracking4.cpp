@@ -623,6 +623,17 @@ private:
         double abs_v_mag = std::sqrt(abs_vx * abs_vx + abs_vy * abs_vy);
         track.abs_velocity = abs_v_mag;
 
+        if (track.age > 10 && !track.has_moved) 
+        {
+            ROS_INFO("ID: %d | Ego_V: %.2f | EKF_Rel_V(전체): %.2f | EKF_Yaw: %.2f | Rel_VX: %.2f | Abs_V: %.2f", 
+                     track.track_id, 
+                     my_car_velocity_, 
+                     track.kf.state_(3), // EKF가 생각하는 순수 상대 속도 크기
+                     track.kf.state_(4) * 180.0 / M_PI, // EKF가 생각하는 이동 방향(각도)
+                     obj_rel_vx, // X축으로 쪼갠 상대 속도
+                     track.abs_velocity);
+        }
+
         if (track.age > 3 && abs_v_mag > 1.5) 
         {
             track.has_moved = true; 
