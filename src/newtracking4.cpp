@@ -39,7 +39,6 @@ struct BoxInfo
 
 BoxInfo fitLShape(const pcl::PointCloud<PointT>::Ptr& cluster)
 {
-    // (기존과 동일한 L-Shape Fitting 코드)
     BoxInfo box;
     PointT min_pt, max_pt;
     pcl::getMinMax3D(*cluster, min_pt, max_pt);
@@ -180,7 +179,6 @@ public:
 
         Q_ = Eigen::MatrixXd::Identity(6, 6);
         Q_ *= 0.1; 
-        // [수정 1] 속도(상태 3)에 대한 Process Noise를 대폭 증가
         Q_(3,3) = 20.0; 
         Q_(4,4) = 0.5; 
         Q_(5,5) = 0.5; 
@@ -198,7 +196,6 @@ public:
         initialized_ = true;
     }
 
-    // [추가 1] 내 차의 가속도를 반영해 상태(상대 속도)를 강제 보정하는 함수
     void applyEgoAcceleration(double ego_accel_x, double dt)
     {
         if (!initialized_) return;
@@ -206,15 +203,11 @@ public:
         double v = state_(3);
         double yaw = state_(4);
         
-        // 극좌표계(v, yaw)를 직교좌표계(vx, vy)로 변환
         double vx = v * std::cos(yaw);
         double vy = v * std::sin(yaw);
         
-        // 내 차가 가속(ego_accel_x)하면, 라이다 기준 세상의 모든 물체는 
-        // 반대 방향(-ego_accel_x)으로 가속하는 것처럼 보임. 이를 사전에 빼줌.
         vx -= (ego_accel_x * dt);
         
-        // 다시 극좌표계로 변환하여 상태 업데이트
         state_(3) = std::sqrt(vx * vx + vy * vy);
         state_(4) = std::atan2(vy, vx);
     }
@@ -377,7 +370,6 @@ private:
     float max_disappeared_frames_;
     float gating_threshold_;
     
-    // [추가 2] 가속도를 계산하기 위한 이전 속도값과 현재 가속도 변수 추가
     double my_car_velocity_; 
     double prev_my_car_velocity_;
     double my_car_accel_;
@@ -394,6 +386,9 @@ private:
         bool has_moved;       
         bool is_large_size;   
         double abs_velocity;  
+        
+        // [추가] 연속 이동 프레임 카운터
+        int moving_frames_count; 
     };
     
     std::vector<Track> tracks_;
@@ -606,7 +601,6 @@ private:
             track.kf.state_(5) = diff_yaw / dt; 
         }
 
-        // [수정 2] EKF 예측(Predict) 전에, 내 차의 가속도를 넣어 가상(Fictitious)의 역방향 가속을 적용
         track.kf.applyEgoAcceleration(my_car_accel_, dt);
 
         track.kf.predict(dt);
@@ -616,7 +610,6 @@ private:
         double obj_rel_vx = obj_rel_v * cos(track.kf.state_(4)); 
         double obj_rel_vy = obj_rel_v * sin(track.kf.state_(4)); 
 
-        // [수정 3] 이제 EKF 내부에서 내 차 가속도를 즉각 상쇄했으므로 오차 튀는 현상(Lag)이 제거됨.
         double abs_vx = obj_rel_vx + my_car_velocity_; 
         double abs_vy = obj_rel_vy;
 
@@ -625,19 +618,34 @@ private:
 
         if (track.age > 10 && !track.has_moved) 
         {
-            ROS_INFO("ID: %d | Ego_V: %.2f | EKF_Rel_V(전체): %.2f | EKF_Yaw: %.2f | Rel_VX: %.2f | Abs_V: %.2f", 
-                     track.track_id, 
-                     my_car_velocity_, 
-                     track.kf.state_(3), // EKF가 생각하는 순수 상대 속도 크기
-                     track.kf.state_(4) * 180.0 / M_PI, // EKF가 생각하는 이동 방향(각도)
-                     obj_rel_vx, // X축으로 쪼갠 상대 속도
-                     track.abs_velocity);
+            ROS_INFO("ID: %d | Ego_V: %.2f | Rel_VX: %.2f | Abs_V: %.2f", 
+                     track.track_id, my_car_velocity_, obj_rel_vx, track.abs_velocity);
         }
 
-        if (track.age > 3 && abs_v_mag > 1.5) 
+        // =========================================================================
+        // [수정] Move / Stop 판단 로직 (히스테리시스 & 연속 프레임 적용)
+        // =========================================================================
+        double move_speed_threshold = 3.0; // 속도 임계값 (m/s)
+        int move_frame_threshold = 4;      // 연속 프레임 임계값
+
+        if (abs_v_mag > move_speed_threshold) 
+        {
+            track.moving_frames_count++; // 임계값을 넘으면 카운트 증가
+        } 
+        else if (abs_v_mag < 1.0) 
+        {
+            // 속도가 완전히 줄어들었다고 판단될 때만 카운터를 0으로 만들고 정지 상태로 전환 (히스테리시스)
+            // 이렇게 하면 일시적인 노이즈로 속도가 잠깐 떨어져도 상태가 깜빡이지 않습니다.
+            track.moving_frames_count = 0; 
+            track.has_moved = false; 
+        }
+
+        // age가 충분히 쌓였고, 연속 이동 임계 프레임을 달성했을 때 확실하게 Move로 판정
+        if (track.age > 5 && track.moving_frames_count >= move_frame_threshold) 
         {
             track.has_moved = true; 
         }
+        // =========================================================================
 
         float max_s = std::max(detection.bbox.size.x, detection.bbox.size.y);
         if (max_s > 5.8f) 
@@ -655,7 +663,6 @@ private:
         track.age++;
     }
     
-    // [수정 4] 사라진 객체의 predict 단계에도 가속도 보상을 함께 적용
     void updateDisappearedTracks(double dt)
     {
         for (auto& track : tracks_) {
@@ -690,6 +697,9 @@ private:
             new_track.is_large_size = false;
             new_track.abs_velocity = 0.0; 
 
+            // [추가] 생성 시 연속 프레임 카운터 0으로 초기화
+            new_track.moving_frames_count = 0;
+
             geometry_msgs::Point init_pos = getCenter(detections.detections[det_idx]);
             double init_yaw = getYawFromQuaternion(detections.detections[det_idx].bbox.center.orientation);
             
@@ -700,10 +710,9 @@ private:
     }
     
 public:
-    // [추가 3] 변수 초기화 추가
     GigachaLidarTracking() : nh_("~"), next_track_id_(1), my_car_velocity_(0.0), prev_my_car_velocity_(0.0), my_car_accel_(0.0)
     {
-        ROS_INFO("GIGACHA LiDAR Tracking Node (Velocity-based Wall Filtering) Starting...");
+        ROS_INFO("GIGACHA LiDAR Tracking Node Starting...");
         
         nh_.param<float>("max_mahalanobis_distance", max_mahalanobis_distance_, 3.0f);
         nh_.param<float>("max_disappeared_frames", max_disappeared_frames_, 5.0f);
@@ -730,10 +739,18 @@ public:
         if (dt < 0.001 || dt > 1.0) dt = 0.1;
         last_update_time_ = current_time;
         
-        // [추가 4] 매 dt마다 내 차의 순간 가속도(Acceleration)를 계산합니다.
-        my_car_accel_ = (my_car_velocity_ - prev_my_car_velocity_) / dt;
+        // =========================================================================
+        // [수정] 수치 미분 노이즈를 억제하기 위한 가속도 LPF(Low-Pass Filter) 적용
+        // =========================================================================
+        double raw_accel = (my_car_velocity_ - prev_my_car_velocity_) / dt;
         prev_my_car_velocity_ = my_car_velocity_;
         
+        // alpha 값이 작을수록 더 부드러워지지만(노이즈 억제), 실제 변화를 반영하는 데 약간의 지연이 생깁니다.
+        // 0.2 ~ 0.5 사이의 값으로 튜닝해 보는 것을 추천합니다.
+        double alpha = 0.3; 
+        my_car_accel_ = alpha * raw_accel + (1.0 - alpha) * my_car_accel_;
+        // =========================================================================
+
         vision_msgs::Detection3DArray processed_msg = *msg; 
         std::vector<int> valid_indices; 
 
@@ -817,7 +834,6 @@ public:
             } else {
                 tracks_[i].disappeared_count++;
                 
-                // [수정 5] 보이지 않게 된 객체들도 내 차의 가속도를 계산해주며 예측
                 tracks_[i].kf.applyEgoAcceleration(my_car_accel_, dt);
                 tracks_[i].kf.predict(dt);
             }
