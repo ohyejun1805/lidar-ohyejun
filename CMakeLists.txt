@@ -30,6 +30,7 @@ include_directories(
   ${Eigen3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${CMAKE_SOURCE_DIR}/patchwork-plusplus-ros/include
 )
 
 ## Declare this project as a catkin package
@@ -67,7 +68,6 @@ target_link_libraries(gigacha_lidar_clustering
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}
-  patchworkpp::patchworkpp  #  라이브러리 링크 필수!
 )
 
 add_dependencies(gigacha_lidar_clustering
